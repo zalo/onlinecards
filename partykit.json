@@ -1,0 +1,10 @@
+{
+  "$schema": "https://www.partykit.io/schema.json",
+  "name": "OnlineCards",
+  "main": "src/server.js",
+  "compatibilityDate": "2024-12-06",
+  "serve": {
+    "path": "public",
+    "build": "src/client.js"
+  }
+}
