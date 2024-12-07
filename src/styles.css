@@ -29,3 +29,14 @@ h6 {
 #app {
   padding: 1rem;
 }
+
+.visible {
+  visibility: visible;
+  opacity: 1;
+  transition: opacity 0.1s linear;
+}
+.hidden {
+  visibility: hidden;
+  opacity: 0;
+  transition: visibility 0s 0.1s, opacity 0.1s linear;
+}

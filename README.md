@@ -1,4 +1,4 @@
-## 🎈 OnlineCards
+## 🎈 onlinecards
 
 Welcome to the party, pal!
 
