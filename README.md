@@ -1,6 +1,20 @@
-## 🎈 onlinecards
+# 🃏 [onlinecards](https://onlinecards.zalo.partykit.dev)
 
-Welcome to the party, pal!
+A barebones interface attempting to replicate some of the flexibility of Tabletop Simulator on the web (in a mobile-friendly formfactor).
+
+### TODO:
+    - Add a button to deal the deck for Pasoi
+    - Add the ability to highlight ranges of cards and move/flip them at the same time
+    - Have the Private Hand Auto-Arrange your cards so they're easy to sort through
+        - Add buttons for auto-sorting by sorting by suit and strength?
+    - Add Discord Activity Integration
+    - Polish up the UI for different screen formfactors
+    - Expose different rooms/parties via Query Parameter in the URL
+    - Hide cursors in the private hand area
+    - Display which players are joined and how many cards they have in their hand
+    - Add card rotation and more physically based movement (throwing?)
+    - Auto-publish via Github Action?
+    - Add More Games? (Palace?  One-Night Ultimate Werewolf?)
 
 This is a [Partykit](https://partykit.io) project, which lets you create real-time collaborative applications with minimal coding effort.
 

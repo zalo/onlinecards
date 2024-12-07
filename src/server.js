@@ -97,7 +97,7 @@ class PartyServer {
         this.cards[data.card].position.x += data.movement.x;
         this.cards[data.card].position.y += data.movement.y;
         // Clamp the position of the card
-        this.cards[data.card].position.x = Math.max(0, Math.min(400, this.cards[data.card].position.x));
+        this.cards[data.card].position.x = Math.max(0, Math.min(500, this.cards[data.card].position.x));
         this.cards[data.card].position.y = Math.max(0, Math.min(500, this.cards[data.card].position.y));
 
         if(this.cards[data.card].position.y < 300){

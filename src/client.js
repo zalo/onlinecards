@@ -52,7 +52,7 @@ class CardGame {
 
     this.hand = document.createElement("div");
     this.hand.style.position = "absolute";
-    this.hand.style.width = "550px";
+    this.hand.style.width = "650px";
     this.hand.style.height = "300px";
     this.hand.style.top = "400px";
     this.hand.style.left = "0px";
@@ -66,6 +66,9 @@ class CardGame {
     this.hand.style.fontSize = "50px";
     this.hand.style.pointerEvents = "none";
     this.hand.textContent = "Your Hand";
+
+    this.lastDown = 0.0;
+    this.previousDown = 0.0;
 
     document.body.appendChild(this.hand);
   }
@@ -85,6 +88,19 @@ class CardGame {
     }));
 
     if(this.curDragging !== undefined) {
+      if (event.type === "pointerdown") {
+        this.previousDown = this.lastDown;
+        this.lastDown = performance.now();
+        if (this.lastDown - this.previousDown < 300){
+          this.cards[this.curDragging].flipped = !this.cards[this.curDragging].flipped;
+          this.conn.send(JSON.stringify({
+            type: "cardFlip",
+            card: this.curDragging
+          }));
+          console.log("Flipped card: "+this.curDragging);
+        }
+      }
+
       this.conn.send(JSON.stringify({
         type: "card",
         card: this.curDragging,
@@ -139,15 +155,15 @@ class CardGame {
               event.preventDefault(); //event.stopPropagation();
               this.curDragging = undefined;
             }, { passive: false });
-            img.addEventListener("dblclick", (event) => {
-              event.preventDefault(); //event.stopPropagation();
-              this.cards[card].flipped = !this.cards[card].flipped;
-              this.conn.send(JSON.stringify({
-                type: "cardFlip",
-                card: card
-              }));
-              console.log("Flipped card: "+card);
-            }, { passive: false });
+            //img.addEventListener("dblclick", (event) => {
+            //  event.preventDefault(); //event.stopPropagation();
+            //  this.cards[card].flipped = !this.cards[card].flipped;
+            //  this.conn.send(JSON.stringify({
+            //    type: "cardFlip",
+            //    card: card
+            //  }));
+            //  console.log("Flipped card: "+card);
+            //}, { passive: false });
 
             this.cards[card].element = img;
           } else {
