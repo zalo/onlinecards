@@ -163,7 +163,7 @@ class CardGame {
     // Step 2: Create a sorting slot position for each card in the hand
     let slots = [];
     for (let i = 0; i < cardsInHand.length; i++) {
-      slots.push({ x: 550 * (i / cardsInHand.length) + 50, y: 500 });
+      slots.push({ x: 500 * (i / cardsInHand.length) + 50, y: 500 });
     }
 
     // Step 3: Apply the Jonker-Volgenant Algorithm to sort the cards in the hand to their slots
@@ -180,14 +180,17 @@ class CardGame {
       if(card !== this.curDragging){
         let movementX = (slots[lapOut.col[i]].x - this.cards[card].position.x) * alpha2;
         let movementY = (slots[lapOut.col[i]].y - this.cards[card].position.y) * alpha2;
-        this.conn.send(JSON.stringify({
-          type: "card",
-          card: card,
-          movement: {
-            x: movementX,
-            y: movementY,
-          },
-        }));
+        if (Math.abs(movementX) > 0.1 || Math.abs(movementY) > 0.1) {
+          this.conn.send(JSON.stringify({
+            type: "card",
+            card: card,
+            zIndex: 10000 + lapOut.col[i],
+            movement: {
+              x: movementX,
+              y: movementY,
+            },
+          }));
+        }
       }
     }
   }

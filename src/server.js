@@ -108,22 +108,15 @@ class PartyServer {
             this.cards[data.card].visibleOnlyTo = sender.id;
           }
         }
-
-        //this.cards[data.card].rotation    = data.rotation;
-        //this.cards[data.card].flipped     = data.flipped;
-        this.cards[data.card].zIndex     = this.highestzIndex;
-        this.highestzIndex += 1;
-      //} else if(data.type === "cardAnchor"){
-      //  this.cards[data.card].anchors[sender.id] = {
-      //    localAnchor: data.localAnchor,
-      //    worldTarget: data.worldTarget,
-      //  };
-      //  // Compute the average position of all the anchors
-      //  this.cards[data.card].position           = data.worldTarget;
-      //  this.cards[data.card].rotation           = data.rotation;
-      //  this.cards[data.card].flipped            = data.flipped;
-      //  this.cards[data.card].zIndex            = this.highestzIndex;
-      //  this.highestzIndex += 1;
+        //this.cards[data.card].rotation    = data.rotation;  // Unused so far
+        if(data.zIndex !== undefined){
+          this.cards[data.card].zIndex     = data.zIndex;
+        }else{
+          //if (this.cards[data.card].visibleOnlyTo === "all"){
+            this.cards[data.card].zIndex     = this.highestzIndex;
+            this.highestzIndex += 1;
+          //}
+        }
       } else if(data.type === "name"){
         this.players[sender.id].name             = data.name;
       } else {
