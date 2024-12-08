@@ -48,7 +48,7 @@ class PartyServer {
         cards: this.cards,
       }));
       this.hasNewInfoToSend = false;
-    }, 1000/240);
+    }, 1000/30);
   }
 
   /**

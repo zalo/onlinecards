@@ -24,9 +24,9 @@ class CardGame {
     /** @type {HTMLDivElement} - The DOM element to append all messages we get */
     this.output = /** @type {HTMLDivElement} */ (document.body);//getElementById("app"));
 
-    /** @type {Record<string, { suit: string, value: string, position: { x: number, y: number }, rotation: number, flipped: boolean, dirty: boolean, element: HTMLImageElement, visibleOnlyTo: string, zIndex: number }>} */
+    /** @type {Record<string, { suit: string, value: string, position: { x: number, y: number }, renderPosition: { x: number, y: number }, rotation: number, flipped: boolean, dirty: boolean, element: HTMLImageElement, visibleOnlyTo: string, zIndex: number }>} */
     this.cards   = {};
-    /** @type {Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, cursorPressed: boolean, dirty: boolean, element: HTMLImageElement }>} */
+    /** @type {Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, renderPosition: { x: number, y: number }, cursorPressed: boolean, dirty: boolean, element: HTMLImageElement }>} */
     this.players = {};
 
     this.curDragging = undefined;
@@ -69,6 +69,9 @@ class CardGame {
 
     this.lastDown = 0.0;
     this.previousDown = 0.0;
+
+    this.prevTime = 0.0;
+    this.time = 0.0;
 
     document.body.appendChild(this.hand);
   }
@@ -117,9 +120,32 @@ class CardGame {
     requestAnimationFrame(this.animationCallback);
   }
 
-  updateOnClient() {
+  /** @param {number} timeMS */
+  updateOnClient(timeMS) {
     requestAnimationFrame(this.animationCallback);
-    // Check to see if this client's cursor has moved or clicked and send an update if so
+
+    // Calculate the framerate-independent movement interpolation alpha
+    // (This should really be done with a proper timeline interpolator, but I'm too lazy to write one again)
+    this.prevTime = this.time;
+    this.time = timeMS / 1000.0;
+    this.deltaTime = this.time - this.prevTime;
+    let alpha = 1.0 - Math.exp(-25 * this.deltaTime);
+
+    // Interpolate the cards' render positions towards their actual positions
+    for (let card in this.cards) {
+      this.cards[card].renderPosition.x += (this.cards[card].position.x - this.cards[card].renderPosition.x) * alpha;
+      this.cards[card].renderPosition.y += (this.cards[card].position.y - this.cards[card].renderPosition.y) * alpha;
+      this.cards[card].element.style.transform = `translate(${this.cards[card].renderPosition.x - (238*0.25)}px,
+                                                            ${this.cards[card].renderPosition.y - (332*0.25)}px)
+                                                            rotate(${this.cards[card].rotation}deg) scale(0.5)`;
+    }
+
+    // Interpolate the players' render positions towards their actual positions
+    for (let player in this.players) {
+      this.players[player].renderPosition.x += (this.players[player].cursorPosition.x - this.players[player].renderPosition.x) * alpha;
+      this.players[player].renderPosition.y += (this.players[player].cursorPosition.y - this.players[player].renderPosition.y) * alpha;
+      this.players[player].element.style.transform = `translate3d(${this.players[player].renderPosition.x}px, ${this.players[player].renderPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -10 : 0}deg)`;
+    }
   }
 
   /** @param {MessageEvent} event - The message event */
@@ -166,11 +192,12 @@ class CardGame {
             //}, { passive: false });
 
             this.cards[card].element = img;
+            this.cards[card].renderPosition = { x: this.cards[card].position.x, y: this.cards[card].position.y };
           } else {
             Object.assign(this.cards[card], data.cards[card]);
-            this.cards[card].element.style.transform = `translate(${this.cards[card].position.x - (238*0.25)}px, 
-                                                                  ${this.cards[card].position.y - (332*0.25)}px) 
-                                                                  rotate(${this.cards[card].rotation}deg) scale(0.5)`;
+            //this.cards[card].element.style.transform = `translate(${this.cards[card].position.x - (238*0.25)}px, 
+            //                                                      ${this.cards[card].position.y - (332*0.25)}px) 
+            //                                                      rotate(${this.cards[card].rotation}deg) scale(0.5)`;
             this.cards[card].element.style.zIndex = ""+this.cards[card].zIndex;
             let visible = (this.cards[card].visibleOnlyTo === "all" || this.cards[card].visibleOnlyTo === this.conn.id);
             this.cards[card].element.classList.toggle("visible", visible);
@@ -205,9 +232,10 @@ class CardGame {
             img.style.pointerEvents = "none";
             document.body.prepend(img);
             this.players[player].element = img;
+            this.players[player].renderPosition = { x: this.players[player].cursorPosition.x, y: this.players[player].cursorPosition.y };
           } else {
             Object.assign(this.players[player], data.players[player]);
-            this.players[player].element.style.transform = `translate3d(${this.players[player].cursorPosition.x}px, ${this.players[player].cursorPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -10 : 0}deg)`;
+            //this.players[player].element.style.transform = `translate3d(${this.players[player].cursorPosition.x}px, ${this.players[player].cursorPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -10 : 0}deg)`;
           }
           this.players[player].dirty = false;
         }
