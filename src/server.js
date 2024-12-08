@@ -29,7 +29,7 @@ class PartyServer {
         this.cards[this.suits[suitInd]+"="+this.values[valueInd]] = {
           suit: this.suits[suitInd], 
           value: this.values[valueInd],
-          position: { x: 0, y: 0 },
+          position: { x: 20, y: 30 },
           rotation: 0,
           flipped: true,
           visibleOnlyTo: "all",
@@ -97,10 +97,10 @@ class PartyServer {
         this.cards[data.card].position.x += data.movement.x;
         this.cards[data.card].position.y += data.movement.y;
         // Clamp the position of the card
-        this.cards[data.card].position.x = Math.max(0, Math.min(500, this.cards[data.card].position.x));
+        this.cards[data.card].position.x = Math.max(0, Math.min(380, this.cards[data.card].position.x));
         this.cards[data.card].position.y = Math.max(0, Math.min(500, this.cards[data.card].position.y));
 
-        if(this.cards[data.card].position.y < 300){
+        if(this.cards[data.card].position.y < 350){
           this.cards[data.card].visibleOnlyTo = "all";
         } else {
           // This moving player is taking ownership of the card and hiding it in his hand

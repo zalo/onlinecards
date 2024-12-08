@@ -53,20 +53,65 @@ class CardGame {
 
     this.hand = document.createElement("div");
     this.hand.style.position = "absolute";
-    this.hand.style.width = "650px";
-    this.hand.style.height = "300px";
-    this.hand.style.top = "400px";
+    this.hand.style.width = "380px";
+    this.hand.style.height = "200px";
+    this.hand.style.top = "435px";
     this.hand.style.left = "0px";
-    this.hand.style.backgroundColor = "rgba(255, 255, 255, 0.5)";
+    this.hand.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
     this.hand.style.border = "10px solid black";
     this.hand.style.borderRadius = "20px";
     this.hand.style.zIndex = "0";
     this.hand.style.textAlign = "center";
     this.hand.style.verticalAlign = "middle";
-    this.hand.style.lineHeight = "300px";
+    this.hand.style.lineHeight = "200px";
     this.hand.style.fontSize = "50px";
     this.hand.style.pointerEvents = "none";
     this.hand.textContent = "Your Hand";
+    document.body.appendChild(this.hand);
+
+    // Add a button to deal the player one card
+    this.dealButton = document.createElement("button");
+    this.dealButton.style.position = "absolute";
+    this.dealButton.style.width = "170px";
+    this.dealButton.style.height = "50px";
+    this.dealButton.style.top = "0px";
+    this.dealButton.style.left = "200px";
+    this.dealButton.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
+    this.dealButton.style.border = "10px solid black";
+    this.dealButton.style.borderRadius = "20px";
+    this.dealButton.style.zIndex = "0";
+    this.dealButton.style.textAlign = "center";
+    this.dealButton.style.verticalAlign = "middle";
+    this.dealButton.style.lineHeight = "20px";
+    this.dealButton.style.fontSize = "20px";
+    this.dealButton.style.pointerEvents = "auto";
+    this.dealButton.textContent = "Deal Card";
+    this.dealButton.addEventListener("click", () => {
+      // Select a random card that is in the top left corner of the screen
+      let maxZIndex = -1;
+      let topCard = undefined;
+      for(let card in this.cards){
+        if(this.cards[card].position.x < 25 && this.cards[card].position.y < 35 && this.cards[card].zIndex > maxZIndex){
+          maxZIndex = this.cards[card].zIndex;
+          topCard = card;
+        }
+      }
+      this.conn.send(JSON.stringify({
+        type: "card",
+        card: topCard,
+        movement: {
+          x: 1000,
+          y: 1000,
+        },
+      }));
+      setTimeout(() => {
+        this.conn.send(JSON.stringify({
+          type: "cardFlip",
+          card: topCard
+        }));
+      }, 100);
+    });
+    document.body.appendChild(this.dealButton);
 
     this.lastDown = 0.0;
     this.previousDown = 0.0;
@@ -74,7 +119,7 @@ class CardGame {
     this.prevTime = 0.0;
     this.time = 0.0;
 
-    document.body.appendChild(this.hand);
+
   }
 
   /** @param {PointerEvent} event */
@@ -96,7 +141,7 @@ class CardGame {
         this.previousDown = this.lastDown;
         this.lastDown = performance.now();
         if (this.lastDown - this.previousDown < 300){
-          this.cards[this.curDragging].flipped = !this.cards[this.curDragging].flipped;
+          //this.cards[this.curDragging].flipped = !this.cards[this.curDragging].flipped;
           this.conn.send(JSON.stringify({
             type: "cardFlip",
             card: this.curDragging
@@ -138,16 +183,18 @@ class CardGame {
     for (let card in this.cards) {
       this.cards[card].renderPosition.x += (this.cards[card].position.x - this.cards[card].renderPosition.x) * alpha;
       this.cards[card].renderPosition.y += (this.cards[card].position.y - this.cards[card].renderPosition.y) * alpha;
-      this.cards[card].element.style.transform = `translate(${this.cards[card].renderPosition.x - (238*0.25)}px,
-                                                            ${this.cards[card].renderPosition.y - (332*0.25)}px)
-                                                            rotate(${this.cards[card].rotation}deg) scale(0.5)`;
+      this.cards[card].element.style.transform = `translate(${this.cards[card].renderPosition.x - (238*0.4)}px,
+                                                            ${this.cards[card].renderPosition.y - (332*0.4)}px)
+                                                            rotate(${this.cards[card].rotation}deg) scale(0.4)`;
     }
 
     // Interpolate the players' render positions towards their actual positions
     for (let player in this.players) {
       this.players[player].renderPosition.x += (this.players[player].cursorPosition.x - this.players[player].renderPosition.x) * alpha;
       this.players[player].renderPosition.y += (this.players[player].cursorPosition.y - this.players[player].renderPosition.y) * alpha;
-      this.players[player].element.style.transform = `translate3d(${this.players[player].renderPosition.x}px, ${this.players[player].renderPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -10 : 0}deg)`;
+      this.players[player].element.style.transform = `translate3d(${this.players[player].renderPosition.x}px, ${this.players[player].renderPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -20 : 0}deg)`;
+      this.players[player].element.style.visibility = (player === this.conn.id || this.players[player].renderPosition.y > 400) ? "hidden" : "visible";
+    
     }
 
 
@@ -163,7 +210,7 @@ class CardGame {
     // Step 2: Create a sorting slot position for each card in the hand
     let slots = [];
     for (let i = 0; i < cardsInHand.length; i++) {
-      slots.push({ x: 500 * (i / cardsInHand.length) + 50, y: 500 });
+      slots.push({ x: 320 * (i / cardsInHand.length) + 30, y: 500 });
     }
 
     // Step 3: Apply the Jonker-Volgenant Algorithm to sort the cards in the hand to their slots
@@ -180,7 +227,7 @@ class CardGame {
       if(card !== this.curDragging){
         let movementX = (slots[lapOut.col[i]].x - this.cards[card].position.x) * alpha2;
         let movementY = (slots[lapOut.col[i]].y - this.cards[card].position.y) * alpha2;
-        if (Math.abs(movementX) > 0.1 || Math.abs(movementY) > 0.1) {
+        if (Math.abs(movementX) > 0.1 || Math.abs(movementY) > 0.1 || this.cards[card].zIndex !== 10000 + lapOut.col[i]) {
           this.conn.send(JSON.stringify({
             type: "card",
             card: card,
@@ -311,7 +358,7 @@ class CardGame {
 
   /** @param {string} text - The text to be added */
   add(text) {
-    this.output.appendChild(document.createTextNode(text));
+    this.output.appendChild(document.createTextNode("........."+text));
     this.output.appendChild(document.createElement("br"));
   }
 
