@@ -3,6 +3,7 @@
 
 import "./styles.css";
 import PartySocket from "partysocket";
+import lap from "./lap.js";
 
 class CardGame {
   constructor() {
@@ -126,10 +127,12 @@ class CardGame {
 
     // Calculate the framerate-independent movement interpolation alpha
     // (This should really be done with a proper timeline interpolator, but I'm too lazy to write one again)
+    if(!timeMS) { timeMS = performance.now(); }
     this.prevTime = this.time;
     this.time = timeMS / 1000.0;
     this.deltaTime = this.time - this.prevTime;
     let alpha = 1.0 - Math.exp(-25 * this.deltaTime);
+    let alpha2 = 1.0 - Math.exp(-15 * this.deltaTime);
 
     // Interpolate the cards' render positions towards their actual positions
     for (let card in this.cards) {
@@ -145,6 +148,47 @@ class CardGame {
       this.players[player].renderPosition.x += (this.players[player].cursorPosition.x - this.players[player].renderPosition.x) * alpha;
       this.players[player].renderPosition.y += (this.players[player].cursorPosition.y - this.players[player].renderPosition.y) * alpha;
       this.players[player].element.style.transform = `translate3d(${this.players[player].renderPosition.x}px, ${this.players[player].renderPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -10 : 0}deg)`;
+    }
+
+
+    // Create a friendly automatic sorting system for the Hand
+    // Step 1: Create a list of cards in the hand
+    let cardsInHand = [];
+    for (let card in this.cards) {
+      if (this.cards[card].visibleOnlyTo === this.conn.id) {
+        cardsInHand.push(card);
+      }
+    }
+
+    // Step 2: Create a sorting slot position for each card in the hand
+    let slots = [];
+    for (let i = 0; i < cardsInHand.length; i++) {
+      slots.push({ x: 550 * (i / cardsInHand.length) + 50, y: 500 });
+    }
+
+    // Step 3: Apply the Jonker-Volgenant Algorithm to sort the cards in the hand to their slots
+    let lapOut = lap(slots.length, /** @param {number} aInd @param {number} bInd */ (aInd, bInd)=>{
+      let a = slots[aInd];
+      let b = this.cards[cardsInHand[bInd]].position;
+      let x = b.x - a.x; let y = b.y - a.y;
+      return (x*x) + (y*y);
+    });
+
+    // Step 4: Gently lerp the cards to their new positions
+    for(let i = 0; i < lapOut.col.length; i++){
+      let card = cardsInHand[i];
+      if(card !== this.curDragging){
+        let movementX = (slots[lapOut.col[i]].x - this.cards[card].position.x) * alpha2;
+        let movementY = (slots[lapOut.col[i]].y - this.cards[card].position.y) * alpha2;
+        this.conn.send(JSON.stringify({
+          type: "card",
+          card: card,
+          movement: {
+            x: movementX,
+            y: movementY,
+          },
+        }));
+      }
     }
   }
 

@@ -7,6 +7,7 @@ A barebones interface attempting to replicate some of the flexibility of Tableto
     - Add the ability to highlight ranges of cards and move/flip them at the same time
     - Have the Private Hand Auto-Arrange your cards so they're easy to sort through
         - Add buttons for auto-sorting by sorting by suit and strength?
+
     - Add Discord Activity Integration
     - Polish up the UI for different screen formfactors
     - Expose different rooms/parties via Query Parameter in the URL
