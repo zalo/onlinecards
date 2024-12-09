@@ -24,7 +24,9 @@
 *
 *************************************************************************/
 
-/* This function is the jv shortest augmenting path algorithm to solve the assignment problem */
+/** This function is the jv shortest augmenting path algorithm to solve the assignment problem 
+ * @param {number} dim - problem size
+ * @param {function} cost - cost callback (or matrix) */
 export default function lap(dim, cost) {
   // input:
   // dim        - problem size
@@ -39,6 +41,7 @@ export default function lap(dim, cost) {
   // convert the cost matrix (old API) to a callback (new API)
   if (typeof cost === "object") {
     var cost_matrix = cost;
+    /** @param {number} i @param {number} j */
     cost = function(i, j) {
       return cost_matrix[i][j];
     };

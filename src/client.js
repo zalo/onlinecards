@@ -7,15 +7,6 @@ import lap from "./lap.js";
 
 class CardGame {
   constructor() {
-    // Intercept Main Window Errors
-    window.realConsoleError = console.error;
-    window.addEventListener('error', (event) => {
-        let path = event.filename.split("/");
-        this.add((path[path.length - 1] + ":" + event.lineno + " - " + event.message));
-    });
-    console.error = this.fakeError.bind(this);
-
-
     /** @type {ReturnType<typeof setInterval>} */
     this.pingInterval;
 
@@ -25,12 +16,14 @@ class CardGame {
     /** @type {HTMLDivElement} - The DOM element to append all messages we get */
     this.output = /** @type {HTMLDivElement} */ (document.body);//getElementById("app"));
 
-    /** @type {Record<string, { suit: string, value: string, position: { x: number, y: number }, renderPosition: { x: number, y: number }, rotation: number, flipped: boolean, dirty: boolean, element: HTMLImageElement, visibleOnlyTo: string, zIndex: number }>} */
+    /** @type {Record<string, { suit: string, value: string, position: { x: number, y: number }, renderPosition: { x: number, y: number }, rotation: number, flipped: boolean, dirty: boolean, element: HTMLImageElement, visibleOnlyTo: string, selectedBy: string | null, zIndex: number }>} */
     this.cards   = {};
-    /** @type {Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, renderPosition: { x: number, y: number }, cursorPressed: boolean, dirty: boolean, element: HTMLImageElement }>} */
+    /** @type {Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, renderPosition: { x: number, y: number }, selection: {x1: number, y1: number, x2: number, y2: number} | null, renderSelection: {x1: number, y1: number, x2: number, y2: number}, cursorPressed: boolean, dirty: boolean, element: HTMLImageElement, selectionElement: HTMLDivElement }>} */
     this.players = {};
 
     this.curDragging = undefined;
+    /** @type {{x:number, y:number} | null} */
+    this.selectionStart = null;
 
     /** @type {PartySocket} - The connection object */
     this.conn = new PartySocket({
@@ -87,7 +80,7 @@ class CardGame {
     this.dealButton.style.pointerEvents = "auto";
     this.dealButton.textContent = "Deal Card";
     this.dealButton.addEventListener("click", () => {
-      // Select a random card that is in the top left corner of the screen
+      // Select a random card that is in the top left corner of the screen and deal it to your hand
       let maxZIndex = -1;
       let topCard = undefined;
       for(let card in this.cards){
@@ -96,6 +89,7 @@ class CardGame {
           topCard = card;
         }
       }
+      if(topCard === undefined){ this.add("No cards to deal!"); return; }
       this.conn.send(JSON.stringify({
         type: "card",
         card: topCard,
@@ -118,8 +112,6 @@ class CardGame {
 
     this.prevTime = 0.0;
     this.time = 0.0;
-
-
   }
 
   /** @param {PointerEvent} event */
@@ -141,23 +133,52 @@ class CardGame {
         this.previousDown = this.lastDown;
         this.lastDown = performance.now();
         if (this.lastDown - this.previousDown < 300){
-          //this.cards[this.curDragging].flipped = !this.cards[this.curDragging].flipped;
-          this.conn.send(JSON.stringify({
-            type: "cardFlip",
-            card: this.curDragging
-          }));
-          console.log("Flipped card: "+this.curDragging);
+          this.conn.send(JSON.stringify({ type: "cardFlip", card: this.curDragging }));
+        }
+        if(this.cards[this.curDragging].selectedBy !== this.conn.id){
+          this.conn.send(JSON.stringify({ type: "deselect" }));
         }
       }
 
-      this.conn.send(JSON.stringify({
-        type: "card",
-        card: this.curDragging,
-        movement: {
-          x: event.movementX,
-          y: event.movementY,
-        },
-      }));
+      if(this.cards[this.curDragging].selectedBy === this.conn.id){
+        for(let card in this.cards){
+          if(this.cards[card].selectedBy === this.conn.id){
+            this.conn.send(JSON.stringify({
+              type: "card",
+              card: card,
+              movement: {
+                x: event.movementX,
+                y: event.movementY,
+              },
+            }));
+          }
+        }
+      } else {
+        this.conn.send(JSON.stringify({
+          type: "card",
+          card: this.curDragging,
+          movement: {
+            x: event.movementX,
+            y: event.movementY,
+          },
+        }));
+      }
+    } else {
+      // Consider making a selection
+      if (event.type === "pointerdown" && this.players[this.conn.id].selection === null) {
+        this.conn.send(JSON.stringify({ type: "deselect" }));           // Deselect Existing Selection
+        this.selectionStart = { x: event.pageX, y: event.pageY };       // Create the foundation for a new selection
+      } else if (event.type === "pointermove" && this.selectionStart) {
+        this.conn.send(JSON.stringify({ type: "selection", selection: { // Update the Selection Box
+          x1: Math.min(this.selectionStart.x, event.pageX),
+          y1: Math.min(this.selectionStart.y, event.pageY),
+          x2: Math.max(this.selectionStart.x, event.pageX),
+          y2: Math.max(this.selectionStart.y, event.pageY)
+        } }));
+      } else if (event.type === "pointerup" && this.selectionStart) {
+        this.conn.send(JSON.stringify({ type: "endSelection" }));       // Finish selection
+        this.selectionStart = null;                                     // Clear the selection foundation
+      }
     }
   }
 
@@ -195,6 +216,22 @@ class CardGame {
       this.players[player].element.style.transform = `translate3d(${this.players[player].renderPosition.x}px, ${this.players[player].renderPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -20 : 0}deg)`;
       this.players[player].element.style.visibility = (player === this.conn.id || this.players[player].renderPosition.y > 400) ? "hidden" : "visible";
     
+
+      // Handle the selection box
+      if (this.players[player].selection !== null && (player === this.conn.id || this.players[player].renderPosition.y < 400)) {
+        this.players[player].renderSelection.x1 += (this.players[player].selection.x1 - this.players[player].renderSelection.x1) * alpha;
+        this.players[player].renderSelection.y1 += (this.players[player].selection.y1 - this.players[player].renderSelection.y1) * alpha;
+        this.players[player].renderSelection.x2 += (this.players[player].selection.x2 - this.players[player].renderSelection.x2) * alpha;
+        this.players[player].renderSelection.y2 += (this.players[player].selection.y2 - this.players[player].renderSelection.y2) * alpha;
+
+        this.players[player].selectionElement.style.width  = (this.players[player].renderSelection.x2 - this.players[player].renderSelection.x1) + "px";
+        this.players[player].selectionElement.style.height = (this.players[player].renderSelection.y2 - this.players[player].renderSelection.y1) + "px";
+        this.players[player].selectionElement.style.left   =  this.players[player].renderSelection.x1 + "px";
+        this.players[player].selectionElement.style.top    =  this.players[player].renderSelection.y1 + "px";
+        this.players[player].selectionElement.style.visibility = "visible";
+      }else {
+        this.players[player].selectionElement.style.visibility = "hidden";
+      }
     }
 
 
@@ -224,7 +261,7 @@ class CardGame {
     // Step 4: Gently lerp the cards to their new positions
     for(let i = 0; i < lapOut.col.length; i++){
       let card = cardsInHand[i];
-      if(card !== this.curDragging){
+      if(card !== this.curDragging && !(this.curDragging !== undefined && this.cards[card].selectedBy === this.conn.id)){
         let movementX = (slots[lapOut.col[i]].x - this.cards[card].position.x) * alpha2;
         let movementY = (slots[lapOut.col[i]].y - this.cards[card].position.y) * alpha2;
         if (Math.abs(movementX) > 0.1 || Math.abs(movementY) > 0.1 || this.cards[card].zIndex !== 10000 + lapOut.col[i]) {
@@ -232,10 +269,7 @@ class CardGame {
             type: "card",
             card: card,
             zIndex: 10000 + lapOut.col[i],
-            movement: {
-              x: movementX,
-              y: movementY,
-            },
+            movement: { x: movementX, y: movementY },
           }));
         }
       }
@@ -257,14 +291,15 @@ class CardGame {
         for (let card in data.cards) {
           if (this.cards[card] === undefined) {
             this.cards[card] = data.cards[card];
+            let selectionColor = (this.cards[card].selectedBy !== null) ? "blue" : "black";
             let img = document.createElement("img");
             img.src = "./cards/BACK.jpg"; //"./cards/"+this.cards[card].suit+"-"+this.cards[card].value+".svg";
             img.style.position = "absolute";
-            img.style.border = "10px solid black";
+            img.style.border = "10px solid "+selectionColor;
             img.style.borderRadius = "20px";
             img.style.transition = "opacity 100ms;";
             img.style.zIndex = ""+this.cards[card].zIndex;
-            console.log(card, "Z-Index: "+this.cards[card].zIndex, img.style.zIndex);
+            //console.log(card, "Z-Index: "+this.cards[card].zIndex, img.style.zIndex);
             document.body.prepend(img);
 
             img.addEventListener("pointerdown", (event) => {
@@ -275,15 +310,6 @@ class CardGame {
               event.preventDefault(); //event.stopPropagation();
               this.curDragging = undefined;
             }, { passive: false });
-            //img.addEventListener("dblclick", (event) => {
-            //  event.preventDefault(); //event.stopPropagation();
-            //  this.cards[card].flipped = !this.cards[card].flipped;
-            //  this.conn.send(JSON.stringify({
-            //    type: "cardFlip",
-            //    card: card
-            //  }));
-            //  console.log("Flipped card: "+card);
-            //}, { passive: false });
 
             this.cards[card].element = img;
             this.cards[card].renderPosition = { x: this.cards[card].position.x, y: this.cards[card].position.y };
@@ -292,15 +318,16 @@ class CardGame {
             //this.cards[card].element.style.transform = `translate(${this.cards[card].position.x - (238*0.25)}px, 
             //                                                      ${this.cards[card].position.y - (332*0.25)}px) 
             //                                                      rotate(${this.cards[card].rotation}deg) scale(0.5)`;
+            let selectionColor = (this.cards[card].selectedBy !== null) ? "blue" : "black";
             this.cards[card].element.style.zIndex = ""+this.cards[card].zIndex;
             let visible = (this.cards[card].visibleOnlyTo === "all" || this.cards[card].visibleOnlyTo === this.conn.id);
             this.cards[card].element.classList.toggle("visible", visible);
             this.cards[card].element.classList.toggle("hidden", !visible);
             //this.cards[card].element.style.opacity = (this.cards[card].visibleOnlyTo === "all" || this.cards[card].visibleOnlyTo === this.conn.id) ? "1.0" : "0.0";
             if (this.cards[card].visibleOnlyTo === "all"){
-              this.cards[card].element.style.border = "10px solid black";
+              this.cards[card].element.style.border = "10px solid "+selectionColor;
             }else{
-              this.cards[card].element.style.border = "10px dashed gray";
+              this.cards[card].element.style.border = "10px dashed "+selectionColor;
             }
 
             // Handle the flipping of the card
@@ -326,9 +353,32 @@ class CardGame {
             img.style.pointerEvents = "none";
             document.body.prepend(img);
             this.players[player].element = img;
+
+            let selectionElem = document.createElement("div");
+            selectionElem.style.position = "absolute";
+            selectionElem.style.width = "0px";
+            selectionElem.style.height = "0px";
+            selectionElem.style.top = "0px";
+            selectionElem.style.left = "0px";
+            selectionElem.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+            selectionElem.style.border = "2px dashed blue";
+            selectionElem.style.borderRadius = "20px";
+            selectionElem.style.zIndex = "100000000";
+            selectionElem.style.pointerEvents = "none";
+            document.body.prepend(selectionElem);
+            this.players[player].selectionElement = selectionElem;
+
             this.players[player].renderPosition = { x: this.players[player].cursorPosition.x, y: this.players[player].cursorPosition.y };
+            this.players[player].renderSelection = { x1: 0, y1: 0, x2: 0, y2: 0 };
           } else {
+            let selectionDirty = this.players[player].selection === null;
             Object.assign(this.players[player], data.players[player]);
+            if(selectionDirty && this.players[player].selection !== null){
+              this.players[player].renderSelection.x1 = this.players[player].selection.x1;
+              this.players[player].renderSelection.y1 = this.players[player].selection.y1;
+              this.players[player].renderSelection.x2 = this.players[player].selection.x2;
+              this.players[player].renderSelection.y2 = this.players[player].selection.y2;
+            }
             //this.players[player].element.style.transform = `translate3d(${this.players[player].cursorPosition.x}px, ${this.players[player].cursorPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -10 : 0}deg)`;
           }
           this.players[player].dirty = false;
@@ -360,12 +410,6 @@ class CardGame {
   add(text) {
     this.output.appendChild(document.createTextNode("........."+text));
     this.output.appendChild(document.createElement("br"));
-  }
-
-  // Log Errors as <div>s over the main viewport
-  fakeError(...args) {
-    if (args.length > 0 && args[0]) { this.add(JSON.stringify(args[0])); }
-    window.realConsoleError.apply(console, arguments);
   }
 }
 

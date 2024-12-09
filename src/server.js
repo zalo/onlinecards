@@ -17,12 +17,12 @@ class PartyServer {
     /** @type {Room} */
     this.room = room;
 
-    /** @type {Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, cursorPressed: boolean }>} */
+    /** @type {Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, cursorPressed: boolean, selection: {x1: number, y1: number, x2: number, y2: number} | null}>} */
     this.players = {};
     this.globalPlayerCount = 0;
     this.highestzIndex = 10000;
 
-    /** @type {Record<string, { suit: string, value: string, position: { x: number, y: number }, rotation: number, flipped: boolean, visibleOnlyTo: string, zIndex: number }>} */
+    /** @type {Record<string, { suit: string, value: string, position: { x: number, y: number }, rotation: number, flipped: boolean, visibleOnlyTo: string, selectedBy: string | null, zIndex: number }>} */
     this.cards = {};
     for(let suitInd = 0; suitInd < this.suits.length; suitInd++){
       for(let valueInd = 0; valueInd < this.values.length; valueInd++){
@@ -33,6 +33,7 @@ class PartyServer {
           rotation: 0,
           flipped: true,
           visibleOnlyTo: "all",
+          selectedBy: null,
           zIndex: Math.floor(Math.random() * 10000),
         };
       }
@@ -69,6 +70,7 @@ class PartyServer {
       id: conn.id,
       cursorPosition: { x: 0, y: 0 },
       cursorPressed: false,
+      selection: null,
     };
 
     // Send an update message to all the connections
@@ -91,8 +93,41 @@ class PartyServer {
         this.players[sender.id].cursorPosition.x = data.cursorPosition.x;
         this.players[sender.id].cursorPosition.y = data.cursorPosition.y;
         this.players[sender.id].cursorPressed    = data.cursorPressed;
+      } else if(data.type === "selection"){
+        this.players[sender.id].selection = data.selection;
+        if(data.selection !== null){
+          for(let card in this.cards){
+            if(this.cards[card].position.x > data.selection.x1 && 
+               this.cards[card].position.x < data.selection.x2 && 
+               this.cards[card].position.y > data.selection.y1 && 
+               this.cards[card].position.y < data.selection.y2){
+              if(this.cards[card].selectedBy === null){
+                this.cards[card].selectedBy = sender.id;
+              }
+            } else if (this.cards[card].selectedBy === sender.id) {
+              this.cards[card].selectedBy = null;
+            }
+          }
+        }
+      } else if(data.type === "endSelection"){
+        this.players[sender.id].selection = null;
+      } else if(data.type === "deselect"){
+        for(let card in this.cards){
+          if (this.cards[card].selectedBy === sender.id) {
+            this.cards[card].selectedBy = null;
+          }
+        }
       } else if(data.type === "cardFlip"){
-        this.cards[data.card].flipped = !this.cards[data.card].flipped;
+        let destinationFlip = !this.cards[data.card].flipped;
+        if(this.cards[data.card].selectedBy === sender.id){
+          for(let card in this.cards){
+            if (this.cards[card].selectedBy === sender.id) {
+              this.cards[card].flipped = destinationFlip;
+            }
+          }
+        }else{
+          this.cards[data.card].flipped = destinationFlip;
+        }
       } else if(data.type === "card"){
         this.cards[data.card].position.x += data.movement.x;
         this.cards[data.card].position.y += data.movement.y;
@@ -143,11 +178,15 @@ class PartyServer {
     for(let card in this.cards){
       if(this.cards[card].visibleOnlyTo === conn.id){
         this.cards[card].visibleOnlyTo = "all";
-        this.cards[card].position.x = 0.0;
-        this.cards[card].position.y = 0.0;
-        this.cards[card].zIndex = -10000;
+        this.cards[card].position.x = 20;
+        this.cards[card].position.y = 30;
+        this.cards[card].zIndex = Math.floor(Math.random() * 10000);
         this.cards[card].rotation = 0;
         this.cards[card].flipped = true;
+        this.cards[card].selectedBy = null;
+      }
+      if (this.cards[card].selectedBy === conn.id) {
+        this.cards[card].selectedBy = null;
       }
     }
 
