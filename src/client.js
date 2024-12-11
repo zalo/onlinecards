@@ -397,6 +397,8 @@ class CardGame {
             img.style.borderRadius = "20px";
             img.style.transition = "opacity 100ms;";
             img.style.zIndex = ""+this.cards[card].zIndex;
+            img.style.userSelect = "none";
+            
             //console.log(card, "Z-Index: "+this.cards[card].zIndex, img.style.zIndex);
             document.body.prepend(img);
 
