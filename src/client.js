@@ -378,10 +378,12 @@ class CardGame {
     let dataString = event.data;
     if (dataString.startsWith("{")) {
       let data = JSON.parse(dataString);
-      if (data.type === "fullupdate") {
-        // Enumerate through the cards and the players, marking all dirty
-        for (let   card in this.  cards) { this.  cards[  card].dirty = true; }
-        for (let player in this.players) { this.players[player].dirty = true; }
+      if (data.type.includes("update")) {
+        if(data.type === "fullupdate"){
+          // Enumerate through the cards and the players, marking all dirty
+          for (let   card in this.  cards) { this.  cards[  card].dirty = true; }
+          for (let player in this.players) { this.players[player].dirty = true; }
+        }
 
         // Enumerate through the cards, updating as necessary (and marking clean)
         for (let card in data.cards) {
@@ -514,22 +516,24 @@ class CardGame {
           this.players[player].dirty = false;
         }
 
-        // Enumerate through the cards, removing any that are still dirty
-        for (let card in this.cards) {
-          if (this.cards[card].dirty) {
-            this.cards[card].element.remove();
-            delete this.cards[card];
+        if(data.type === "fullupdate"){
+          // Enumerate through the cards, removing any that are still dirty
+          for (let card in this.cards) {
+            if (this.cards[card].dirty) {
+              this.cards[card].element.remove();
+              delete this.cards[card];
+            }
           }
-        }
 
-        // Enumerate through the players, removing any that are still dirty
-        for (let player in this.players) {
-          if (this.players[player].dirty) {
-            this.add(`Player ${this.players[player].name} has disconnected!`);
-            this.players[player].element.remove();
-            this.players[player].nametag.remove();
-            this.players[player].selectionElement.remove();
-            delete this.players[player];
+          // Enumerate through the players, removing any that are still dirty
+          for (let player in this.players) {
+            if (this.players[player].dirty) {
+              this.add(`Player ${this.players[player].name} has disconnected!`);
+              this.players[player].element.remove();
+              this.players[player].nametag.remove();
+              this.players[player].selectionElement.remove();
+              delete this.players[player];
+            }
           }
         }
       }

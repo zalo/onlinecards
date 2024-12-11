@@ -24,6 +24,9 @@ class PartyServer {
     this.globalPlayerCount = 0;
     this.highestzIndex = 10000;
 
+    /** @type {Record<string, boolean>} */
+    this.needsUpdate = {};
+
     /** @type {Record<string, { suit: string, value: string, position: { x: number, y: number }, rotation: number, flipped: boolean, visibleOnlyTo: string, selectedBy: string | null, zIndex: number }>} */
     this.cards = {};
     for(let suitInd = 0; suitInd < this.suits.length; suitInd++){
@@ -38,18 +41,44 @@ class PartyServer {
           selectedBy: null,
           zIndex: Math.floor(Math.random() * 10000),
         };
+        this.needsUpdate[this.suits[suitInd]+"="+this.values[valueInd]] = true;
       }
     }
 
-    // This co
+    // Send an update message to all the connections
+    this.updateCounter = 0;
     this.hasNewInfoToSend = false;
     this.interval = setInterval(() => {
       if(!this.hasNewInfoToSend) return;
+
+      if(this.updateCounter % 30 === 0){
+      // Send full update: Inefficient, but simple and robust
       this.room.broadcast(JSON.stringify({
         type: "fullupdate",
         players: this.players,
         cards: this.cards,
       }));
+      } else {
+        // Accumulate partial updates from the objects that need updating
+        /** @type {{type:string, players:Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, color:string, cursorPressed: boolean, selection: {x1: number, y1: number, x2: number, y2: number}}>|{}, cards:Record<string, { suit: string, value: string, position: { x: number, y: number }, rotation: number, flipped: boolean, visibleOnlyTo: string, selectedBy: string | null, zIndex: number }>|null}} */
+        let partialUpdate = { type: "partialupdate", players: {}, cards: {} };
+        for(let player in this.players){
+          if(this.needsUpdate[player]){
+            partialUpdate.players[player] = this.players[player];
+            this.needsUpdate[player] = false;
+          }
+        }
+        for(let card in this.cards){
+          if(this.needsUpdate[card]){
+            partialUpdate.cards[card] = this.cards[card];
+            this.needsUpdate[card] = false;
+          }
+        }
+        // Send the partial update
+        this.room.broadcast(JSON.stringify(partialUpdate));
+      }
+      this.updateCounter += 1;
+
       this.hasNewInfoToSend = false;
     }, 1000/30);
   }
@@ -75,6 +104,7 @@ class PartyServer {
       cursorPressed: false,
       selection: null,
     };
+    this.needsUpdate[conn.id] = true;
 
     // Send an update message to all the connections
     this.room.broadcast(JSON.stringify({
@@ -96,6 +126,7 @@ class PartyServer {
         this.players[sender.id].cursorPosition.x = data.cursorPosition.x;
         this.players[sender.id].cursorPosition.y = data.cursorPosition.y;
         this.players[sender.id].cursorPressed    = data.cursorPressed;
+        this.needsUpdate[sender.id] = true;
       } else if(data.type === "selection"){
         this.players[sender.id].selection = data.selection;
         if(data.selection !== null){
@@ -108,31 +139,39 @@ class PartyServer {
                  (this.cards[card].visibleOnlyTo === "all" || 
                   this.cards[card].visibleOnlyTo === sender.id)){
                 this.cards[card].selectedBy = sender.id;
+                this.needsUpdate[card] = true;
               }
             } else if (this.cards[card].selectedBy === sender.id) {
               this.cards[card].selectedBy = null;
+              this.needsUpdate[card] = true;
             }
           }
         }
+        this.needsUpdate[sender.id] = true;
       } else if(data.type === "endSelection"){
         this.players[sender.id].selection = null;
+        this.needsUpdate[sender.id] = true;
       } else if(data.type === "deselect"){
         for(let card in this.cards){
           if (this.cards[card].selectedBy === sender.id) {
             this.cards[card].selectedBy = null;
+            this.needsUpdate[card] = true;
           }
         }
+        this.needsUpdate[sender.id] = true;
       } else if(data.type === "cardFlip"){
         let destinationFlip = !this.cards[data.card].flipped;
         if(this.cards[data.card].selectedBy === sender.id){
           for(let card in this.cards){
             if (this.cards[card].selectedBy === sender.id) {
               this.cards[card].flipped = destinationFlip;
+              this.needsUpdate[card] = true;
             }
           }
         }else{
           this.cards[data.card].flipped = destinationFlip;
         }
+        this.needsUpdate[data.card] = true;
       } else if(data.type.startsWith("card")){
         // Get a list of the cards selected by this conn
         let selectedCards = [];
@@ -161,7 +200,8 @@ class PartyServer {
               this.cards[selectedCards[i]].visibleOnlyTo = sender.id;
             }
           }
-          //this.cards[ownedCards[i]].rotation    = data.rotation;  // Unused so far
+          //this.cards[selectedCards[i]].rotation    = data.rotation;  // Unused so far
+          this.needsUpdate[selectedCards[i]] = true;
         }
 
         // For the rest of the cards, sort them by zIndex, and reassign their zIndex in that order + this.highestzIndex
@@ -169,20 +209,21 @@ class PartyServer {
         for(let card in this.cards){ 
           if(card == data.card ||
             (this.cards[card].selectedBy    === sender.id &&
-             this.cards[card].visibleOnlyTo === "all")) { tableCards.push(card); } }
+             this.cards[card].visibleOnlyTo === "all")) { tableCards.push(card); this.needsUpdate[card] = true; } }
         tableCards.sort((a, b) => { return this.cards[a].zIndex - this.cards[b].zIndex; });
         for(let i = 0; i < tableCards.length; i++){ this.cards[tableCards[i]].zIndex = this.highestzIndex + i;}
         this.highestzIndex += 52;///tableCards.length;
 
         // Sort the cards from left to right and assign their zIndex in that order
         let handCards = [];
-        for(let card in this.cards){ if(this.cards[card].visibleOnlyTo === sender.id) { handCards.push(card); } }
+        for(let card in this.cards){ if(this.cards[card].visibleOnlyTo === sender.id) { handCards.push(card); this.needsUpdate[card] = true; } }
         handCards.sort((a, b) => { return this.cards[a].position.x - this.cards[b].position.x; });
         for(let i = 0; i < handCards.length; i++){
            this.cards[handCards[i]].zIndex = 100000000+i;
         }
       } else if(data.type === "name"){
-        this.players[sender.id].name             = data.name;
+        this.players[sender.id].name = data.name;
+        this.needsUpdate[sender.id] = true;
       }else if(data.type === "chat"){
         this.room.broadcast(JSON.stringify({
           type: "chat",
@@ -199,6 +240,7 @@ class PartyServer {
           this.cards[card].rotation = 0;
           this.cards[card].flipped = true;
           this.cards[card].selectedBy = null;
+          this.needsUpdate[card] = true;
         }
       } else if(data.type.includes("sort")){
         // Sorts all of the cards in a players hand according to its value
@@ -221,6 +263,7 @@ class PartyServer {
         for(let i = 0; i < handCards.length; i++){
            this.cards[handCards[i]].position.x = originalX[i];
            this.cards[handCards[i]].position.y = 495;
+           this.needsUpdate[handCards[i]] = true;
         }
       } else {
         console.error("Unknown message type: " + message);
@@ -256,10 +299,12 @@ class PartyServer {
       if (this.cards[card].selectedBy === conn.id) {
         this.cards[card].selectedBy = null;
       }
+      this.needsUpdate[card] = true;
     }
 
     // Remove the player from the list of players
     delete this.players[conn.id];
+    delete this.needsUpdate[conn.id];
 
     // Send an update message to all the connections
     this.room.broadcast(JSON.stringify({
