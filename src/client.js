@@ -7,8 +7,21 @@ import lap from "./lap.js";
 
 class CardGame {
   constructor() {
-    /** @type {ReturnType<typeof setInterval>} */
-    this.pingInterval;
+    this.queryParams = new URLSearchParams(window.location.search || window.location.hash.substr(1));
+    if(this.queryParams.has("room")){
+      this.curRoom = this.queryParams.get('room') || "global";
+    }else{
+      this.curRoom = "global";
+      this.queryParams.set("room", this.curRoom);
+      window.history.replaceState({}, "", `${window.location.pathname}?${this.queryParams.toString()}`);
+    }
+
+    /** @type {PartySocket} - The connection object */
+    this.conn = new PartySocket({
+      // @ts-expect-error This should be typed as a global string
+      host: PARTYKIT_HOST,
+      room: this.curRoom,
+    });
 
     this.suits  = ["CLUB", "SPADE", "HEART", "DIAMOND"];
     this.values = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11-JACK", "12-QUEEN", "13-KING", "1"];
@@ -28,13 +41,6 @@ class CardGame {
     this.curDragging = undefined;
     /** @type {{x:number, y:number} | null} */
     this.selectionStart = null;
-
-    /** @type {PartySocket} - The connection object */
-    this.conn = new PartySocket({
-      // @ts-expect-error This should be typed as a global string
-      host: PARTYKIT_HOST,
-      room: "card-game-global",
-    });
 
     this.highestZIndex = 10000;
 
