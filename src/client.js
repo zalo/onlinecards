@@ -10,8 +10,8 @@ class CardGame {
     /** @type {ReturnType<typeof setInterval>} */
     this.pingInterval;
 
-    this.suits       = ["CLUB", "HEART", "DIAMOND", "SPADE"];
-    this.values      = ["3", "4", "5", "6", "7", "8", "9", "10", "11-JACK", "12-QUEEN", "13-KING", "1", "2"];
+    this.suits       = ["CLUB", "SPADE", "HEART", "DIAMOND"];
+    this.values      = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11-JACK", "12-QUEEN", "13-KING", "1"];
 
     /** @type {HTMLDivElement} - The DOM element to append all messages we get */
     this.output = /** @type {HTMLDivElement} */ (document.body);//getElementById("app"));
@@ -32,6 +32,8 @@ class CardGame {
       room: "card-game-global",
     });
 
+    this.highestZIndex = 10000;
+
     this.conn.addEventListener("open"   , this.start           .bind(this));
     this.conn.addEventListener("message", this.updateFromServer.bind(this));
 
@@ -47,8 +49,8 @@ class CardGame {
     this.hand = document.createElement("div");
     this.hand.style.position = "absolute";
     this.hand.style.width = "380px";
-    this.hand.style.height = "200px";
-    this.hand.style.top = "435px";
+    this.hand.style.height = "160px";
+    this.hand.style.top = "455px";
     this.hand.style.left = "0px";
     this.hand.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
     this.hand.style.border = "10px solid black";
@@ -56,7 +58,7 @@ class CardGame {
     this.hand.style.zIndex = "0";
     this.hand.style.textAlign = "center";
     this.hand.style.verticalAlign = "middle";
-    this.hand.style.lineHeight = "200px";
+    this.hand.style.lineHeight = "160px";
     this.hand.style.fontSize = "50px";
     this.hand.style.pointerEvents = "none";
     this.hand.textContent = "Your Hand";
@@ -67,8 +69,8 @@ class CardGame {
     this.dealButton.style.position = "absolute";
     this.dealButton.style.width = "170px";
     this.dealButton.style.height = "50px";
-    this.dealButton.style.top = "0px";
-    this.dealButton.style.left = "200px";
+    this.dealButton.style.top = "40px";
+    this.dealButton.style.left = "100px";
     this.dealButton.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
     this.dealButton.style.border = "10px solid black";
     this.dealButton.style.borderRadius = "20px";
@@ -107,6 +109,71 @@ class CardGame {
     });
     document.body.appendChild(this.dealButton);
 
+    // Add a button to deal the player one card
+    this.resetButton = document.createElement("button");
+    this.resetButton.style.position = "absolute";
+    this.resetButton.style.width = "170px";
+    this.resetButton.style.height = "50px";
+    this.resetButton.style.top = "0px";
+    this.resetButton.style.left = "100px";
+    this.resetButton.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
+    this.resetButton.style.border = "10px solid black";
+    this.resetButton.style.borderRadius = "20px";
+    this.resetButton.style.zIndex = "0";
+    this.resetButton.style.textAlign = "center";
+    this.resetButton.style.verticalAlign = "middle";
+    this.resetButton.style.lineHeight = "20px";
+    this.resetButton.style.fontSize = "20px";
+    this.resetButton.style.pointerEvents = "auto";
+    this.resetButton.textContent = "Reset Game";
+    this.resetButton.addEventListener("click", () => {
+      this.conn.send(JSON.stringify({ type: "reset" }));
+    });
+    document.body.appendChild(this.resetButton);
+
+    // Add a button to deal the player one card
+    this.sortSuitButton = document.createElement("button");
+    this.sortSuitButton.style.position = "absolute";
+    this.sortSuitButton.style.width = "150px";
+    this.sortSuitButton.style.height = "50px";
+    this.sortSuitButton.style.top = "640px";
+    this.sortSuitButton.style.left = "200px";
+    this.sortSuitButton.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
+    this.sortSuitButton.style.border = "10px solid black";
+    this.sortSuitButton.style.borderRadius = "20px";
+    this.sortSuitButton.style.zIndex = "0";
+    this.sortSuitButton.style.textAlign = "center";
+    this.sortSuitButton.style.verticalAlign = "middle";
+    this.sortSuitButton.style.lineHeight = "20px";
+    this.sortSuitButton.style.fontSize = "20px";
+    this.sortSuitButton.style.pointerEvents = "auto";
+    this.sortSuitButton.textContent = "Sort Suit";
+    this.sortSuitButton.addEventListener("click", () => {
+      this.conn.send(JSON.stringify({ type: "sortSuit" }));
+    });
+    document.body.appendChild(this.sortSuitButton);
+    this.sortSuitButton = document.createElement("button");
+    this.sortSuitButton.style.position = "absolute";
+    this.sortSuitButton.style.width = "150px";
+    this.sortSuitButton.style.height = "50px";
+    this.sortSuitButton.style.top = "640px";
+    this.sortSuitButton.style.left = "50px";
+    this.sortSuitButton.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
+    this.sortSuitButton.style.border = "10px solid black";
+    this.sortSuitButton.style.borderRadius = "20px";
+    this.sortSuitButton.style.zIndex = "0";
+    this.sortSuitButton.style.textAlign = "center";
+    this.sortSuitButton.style.verticalAlign = "middle";
+    this.sortSuitButton.style.lineHeight = "20px";
+    this.sortSuitButton.style.fontSize = "20px";
+    this.sortSuitButton.style.pointerEvents = "auto";
+    this.sortSuitButton.textContent = "Sort Rank";
+    this.sortSuitButton.addEventListener("click", () => {
+      this.conn.send(JSON.stringify({ type: "sortRank" }));
+    });
+    document.body.appendChild(this.sortSuitButton);
+
+
     this.lastDown = 0.0;
     this.previousDown = 0.0;
 
@@ -140,29 +207,15 @@ class CardGame {
         }
       }
 
-      if(this.cards[this.curDragging].selectedBy === this.conn.id){
-        for(let card in this.cards){
-          if(this.cards[card].selectedBy === this.conn.id){
-            this.conn.send(JSON.stringify({
-              type: "card",
-              card: card,
-              movement: {
-                x: event.movementX,
-                y: event.movementY,
-              },
-            }));
-          }
-        }
-      } else {
-        this.conn.send(JSON.stringify({
-          type: "card",
-          card: this.curDragging,
-          movement: {
-            x: event.movementX,
-            y: event.movementY,
-          },
-        }));
-      }
+      // This will move a single card, or multiple if multiple are selected
+      this.conn.send(JSON.stringify({
+        type: "cardAll",
+        card: this.curDragging,
+        movement: {
+          x: event.movementX,
+          y: event.movementY
+        },
+      }));
     } else {
       // Consider making a selection
       if (event.type === "pointerdown" && this.players[this.conn.id].selection === null) {
@@ -207,6 +260,7 @@ class CardGame {
       this.cards[card].element.style.transform = `translate(${this.cards[card].renderPosition.x - (238*0.4)}px,
                                                             ${this.cards[card].renderPosition.y - (332*0.4)}px)
                                                             rotate(${this.cards[card].rotation}deg) scale(0.4)`;
+      //this.highestZIndex = Math.max(this.highestZIndex, this.cards[card].zIndex);
     }
 
     // Interpolate the players' render positions towards their actual positions
@@ -214,8 +268,9 @@ class CardGame {
       this.players[player].renderPosition.x += (this.players[player].cursorPosition.x - this.players[player].renderPosition.x) * alpha;
       this.players[player].renderPosition.y += (this.players[player].cursorPosition.y - this.players[player].renderPosition.y) * alpha;
       this.players[player].element.style.transform = `translate3d(${this.players[player].renderPosition.x}px, ${this.players[player].renderPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -20 : 0}deg)`;
-      this.players[player].element.style.visibility = (player === this.conn.id || this.players[player].renderPosition.y > 400) ? "hidden" : "visible";
-    
+      let vis = (player === this.conn.id || this.players[player].renderPosition.y > 400);
+      this.players[player].element.classList.toggle("visible",!vis);
+      this.players[player].element.classList.toggle( "hidden", vis);
 
       // Handle the selection box
       if (this.players[player].selection !== null && (player === this.conn.id || this.players[player].renderPosition.y < 400)) {
@@ -228,9 +283,11 @@ class CardGame {
         this.players[player].selectionElement.style.height = (this.players[player].renderSelection.y2 - this.players[player].renderSelection.y1) + "px";
         this.players[player].selectionElement.style.left   =  this.players[player].renderSelection.x1 + "px";
         this.players[player].selectionElement.style.top    =  this.players[player].renderSelection.y1 + "px";
-        this.players[player].selectionElement.style.visibility = "visible";
+        this.players[player].selectionElement.classList.toggle("visible", true);
+        this.players[player].selectionElement.classList.toggle("hidden", !true);
       }else {
-        this.players[player].selectionElement.style.visibility = "hidden";
+        this.players[player].selectionElement.classList.toggle("visible", false);
+        this.players[player].selectionElement.classList.toggle("hidden", !false);
       }
     }
 
@@ -262,15 +319,26 @@ class CardGame {
     for(let i = 0; i < lapOut.col.length; i++){
       let card = cardsInHand[i];
       if(card !== this.curDragging && !(this.curDragging !== undefined && this.cards[card].selectedBy === this.conn.id)){
-        let movementX = (slots[lapOut.col[i]].x - this.cards[card].position.x) * alpha2;
-        let movementY = (slots[lapOut.col[i]].y - this.cards[card].position.y) * alpha2;
-        if (Math.abs(movementX) > 0.1 || Math.abs(movementY) > 0.1 || this.cards[card].zIndex !== 10000 + lapOut.col[i]) {
+        let movementX = (slots[lapOut.col[i]].x - this.cards[card].position.x);
+        let movementY = (slots[lapOut.col[i]].y - this.cards[card].position.y);
+        if (Math.abs(movementX) > 0.1 || Math.abs(movementY) > 0.1){
           this.conn.send(JSON.stringify({
             type: "card",
             card: card,
-            zIndex: 10000 + lapOut.col[i],
+            inHand: true,
+            movement: { x: movementX * alpha2, y: movementY * alpha2 },
+          }));
+        } else if (Math.abs(movementX) > 0.01 || Math.abs(movementY) > 0.01) {
+          // Set the cards to the correct position if they are close enough
+          // This helps avoid visual artifacts from "almost" being in the right place
+          this.conn.send(JSON.stringify({
+            type: "card",
+            card: card,
+            inHand: false,
             movement: { x: movementX, y: movementY },
           }));
+          this.cards[card].position.x += movementX;
+          this.cards[card].position.y += movementY;
         }
       }
     }
@@ -331,7 +399,7 @@ class CardGame {
             }
 
             // Handle the flipping of the card
-            if (this.cards[card].flipped){//} && !this.cards[card].element.src.includes("BACK.jpg")){
+            if (this.cards[card].flipped && !this.cards[card].element.src.includes("BACK.jpg")){
               this.cards[card].element.src = "./cards/BACK.jpg";
             }else if (!this.cards[card].flipped && this.cards[card].element.src.includes("BACK.jpg")){
               this.cards[card].element.src = "./cards/"+this.cards[card].suit+"-"+this.cards[card].value+".svg";

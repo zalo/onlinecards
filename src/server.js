@@ -11,8 +11,8 @@
 class PartyServer {
   /** @param {Room} room */
   constructor(room) {
-    this.suits  = ["CLUB", "HEART", "DIAMOND", "SPADE"];
-    this.values = ["3", "4", "5", "6", "7", "8", "9", "10", "11-JACK", "12-QUEEN", "13-KING", "1", "2"];
+    this.suits  = ["CLUB", "SPADE", "HEART", "DIAMOND"];
+    this.values = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11-JACK", "12-QUEEN", "13-KING", "1"];
 
     /** @type {Room} */
     this.room = room;
@@ -101,7 +101,9 @@ class PartyServer {
                this.cards[card].position.x < data.selection.x2 && 
                this.cards[card].position.y > data.selection.y1 && 
                this.cards[card].position.y < data.selection.y2){
-              if(this.cards[card].selectedBy === null){
+              if(this.cards[card].selectedBy === null && 
+                 (this.cards[card].visibleOnlyTo === "all" || 
+                  this.cards[card].visibleOnlyTo === sender.id)){
                 this.cards[card].selectedBy = sender.id;
               }
             } else if (this.cards[card].selectedBy === sender.id) {
@@ -128,32 +130,95 @@ class PartyServer {
         }else{
           this.cards[data.card].flipped = destinationFlip;
         }
-      } else if(data.type === "card"){
-        this.cards[data.card].position.x += data.movement.x;
-        this.cards[data.card].position.y += data.movement.y;
-        // Clamp the position of the card
-        this.cards[data.card].position.x = Math.max(0, Math.min(380, this.cards[data.card].position.x));
-        this.cards[data.card].position.y = Math.max(0, Math.min(500, this.cards[data.card].position.y));
-
-        if(this.cards[data.card].position.y < 350){
-          this.cards[data.card].visibleOnlyTo = "all";
-        } else {
-          // This moving player is taking ownership of the card and hiding it in his hand
-          if (this.cards[data.card].visibleOnlyTo === "all"){
-            this.cards[data.card].visibleOnlyTo = sender.id;
+      } else if(data.type.startsWith("card")){
+        // Get a list of the cards selected by this conn
+        let selectedCards = [];
+        if(this.cards[data.card].selectedBy === sender.id && data.type === "cardAll"){
+          for(let card in this.cards){ 
+            if(this.cards[card].selectedBy === sender.id){
+               selectedCards.push(card);
+            }
           }
+        } else {
+          selectedCards = [data.card];
         }
-        //this.cards[data.card].rotation    = data.rotation;  // Unused so far
-        if(data.zIndex !== undefined){
-          this.cards[data.card].zIndex     = data.zIndex;
-        }else{
-          //if (this.cards[data.card].visibleOnlyTo === "all"){
-            this.cards[data.card].zIndex     = this.highestzIndex;
-            this.highestzIndex += 1;
-          //}
+
+        for(let i = 0; i < selectedCards.length; i++){
+          // Move and Clamp the position of the card
+          this.cards[selectedCards[i]].position.x += data.movement.x;
+          this.cards[selectedCards[i]].position.y += data.movement.y;
+          this.cards[selectedCards[i]].position.x  = Math.max(0, Math.min(380, this.cards[selectedCards[i]].position.x));
+          this.cards[selectedCards[i]].position.y  = Math.max(0, Math.min(500, this.cards[selectedCards[i]].position.y));
+
+          if(this.cards[selectedCards[i]].position.y < 350){
+            this.cards[selectedCards[i]].visibleOnlyTo = "all";
+          } else {
+            // This moving player is taking ownership of the card and hiding it in his hand
+            if (this.cards[selectedCards[i]].visibleOnlyTo === "all"){
+              this.cards[selectedCards[i]].visibleOnlyTo = sender.id;
+            }
+          }
+          //this.cards[ownedCards[i]].rotation    = data.rotation;  // Unused so far
+        }
+
+        // For the rest of the cards, sort them by zIndex, and reassign their zIndex in that order + this.highestzIndex
+        let tableCards = [];
+        for(let card in this.cards){ 
+          if(card == data.card ||
+            (this.cards[card].selectedBy    === sender.id &&
+             this.cards[card].visibleOnlyTo === "all")) { tableCards.push(card); } }
+        tableCards.sort((a, b) => { return this.cards[a].zIndex - this.cards[b].zIndex; });
+        for(let i = 0; i < tableCards.length; i++){ this.cards[tableCards[i]].zIndex = this.highestzIndex + i;}
+        this.highestzIndex += 52;///tableCards.length;
+
+        // Sort the cards from left to right and assign their zIndex in that order
+        let handCards = [];
+        for(let card in this.cards){ if(this.cards[card].visibleOnlyTo === sender.id) { handCards.push(card); } }
+        handCards.sort((a, b) => { return this.cards[a].position.x - this.cards[b].position.x; });
+        for(let i = 0; i < handCards.length; i++){
+           this.cards[handCards[i]].zIndex = 100000000+i;
         }
       } else if(data.type === "name"){
         this.players[sender.id].name             = data.name;
+      }else if(data.type === "chat"){
+        this.room.broadcast(JSON.stringify({
+          type: "chat",
+          sender: sender.id,
+          message: data.message,
+        }));
+      } else if(data.type === "reset"){
+        // Release all cards that were being held by the player back to the deck in the corner
+        for(let card in this.cards){
+          this.cards[card].visibleOnlyTo = "all";
+          this.cards[card].position.x = 20;
+          this.cards[card].position.y = 30;
+          this.cards[card].zIndex = Math.floor(Math.random() * 10000);
+          this.cards[card].rotation = 0;
+          this.cards[card].flipped = true;
+          this.cards[card].selectedBy = null;
+        }
+      } else if(data.type.includes("sort")){
+        // Sorts all of the cards in a players hand according to its value
+        let handCards = []; let originalX = [];
+        for(let card in this.cards){ if(this.cards[card].visibleOnlyTo === sender.id){ handCards.push(card); originalX.push(this.cards[card].position.x); } }
+        originalX.sort((a, b) => { return a - b; });
+
+        if(data.type === "sortSuit"){
+          handCards.sort((a, b) => {
+            let big   = Math.sign(this.suits.indexOf(this.cards[b]. suit) - this.suits .indexOf(this.cards[a].suit ))*20;
+            let small = Math.sign(this.values.indexOf(this.cards[b].value) - this.values.indexOf(this.cards[a].value));
+            return Math.sign(big+small); });
+        } else if(data.type === "sortRank"){
+          handCards.sort((a, b) => {
+            let big   = Math.sign((this.values.indexOf(this.cards[b].value) - this.values .indexOf(this.cards[a].value)))*20;
+            let small = Math.sign(this.suits.indexOf(this.cards[b].suit ) - this.suits.indexOf(this.cards[a].suit ));
+            return Math.sign(big+small); });
+        }
+
+        for(let i = 0; i < handCards.length; i++){
+           this.cards[handCards[i]].position.x = originalX[i];
+           this.cards[handCards[i]].position.y = 495;
+        }
       } else {
         console.error("Unknown message type: " + message);
       }
