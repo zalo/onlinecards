@@ -1,14 +1,18 @@
 # 🃏 [onlinecards](https://onlinecards.zalo.partykit.dev)
 
-A barebones interface attempting to replicate some of the flexibility of Tabletop Simulator on the web (in a mobile-friendly formfactor).
+A multiplayer card game playing interface designed for phones using Partykit, inspired by Tabletop Simulator.
+
+![Card Game](./public/CardGame.gif)
 
 ### TODO:
+    - Refactor code (currently all in client.js + server.js)
     - Add Discord Activity Integration
     - Polish up the UI for different screen formfactors
     - Add card rotation and more physically based movement (throwing?)
     - Auto-publish via Github Action?
     - Add More Games? (Palace?  One-Night Ultimate Werewolf?)
 
+### Partykit Development Instructions:
 This is a [Partykit](https://partykit.io) project, which lets you create real-time collaborative applications with minimal coding effort.
 
 [`server.js`](./src/server.js) is the server-side code, which is responsible for handling WebSocket events and HTTP requests. [`client.jsx`](./src/client.jsx) is the client-side code, which connects to the server and listens for events.
