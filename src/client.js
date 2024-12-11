@@ -10,16 +10,20 @@ class CardGame {
     /** @type {ReturnType<typeof setInterval>} */
     this.pingInterval;
 
-    this.suits       = ["CLUB", "SPADE", "HEART", "DIAMOND"];
-    this.values      = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11-JACK", "12-QUEEN", "13-KING", "1"];
+    this.suits  = ["CLUB", "SPADE", "HEART", "DIAMOND"];
+    this.values = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11-JACK", "12-QUEEN", "13-KING", "1"];
 
     /** @type {HTMLDivElement} - The DOM element to append all messages we get */
     this.output = /** @type {HTMLDivElement} */ (document.body);//getElementById("app"));
 
     /** @type {Record<string, { suit: string, value: string, position: { x: number, y: number }, renderPosition: { x: number, y: number }, rotation: number, flipped: boolean, dirty: boolean, element: HTMLImageElement, visibleOnlyTo: string, selectedBy: string | null, zIndex: number }>} */
     this.cards   = {};
-    /** @type {Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, renderPosition: { x: number, y: number }, selection: {x1: number, y1: number, x2: number, y2: number} | null, renderSelection: {x1: number, y1: number, x2: number, y2: number}, cursorPressed: boolean, dirty: boolean, element: HTMLImageElement, selectionElement: HTMLDivElement }>} */
+    /** @type {Record<string, { name: string, id:string, color:string, cursorPosition: { x: number, y: number }, renderPosition: { x: number, y: number }, selection: {x1: number, y1: number, x2: number, y2: number} | null, renderSelection: {x1: number, y1: number, x2: number, y2: number}, cursorPressed: boolean, dirty: boolean, element: HTMLImageElement, selectionElement: HTMLDivElement, nametag: HTMLDivElement }>} */
     this.players = {};
+
+    this.playersToColors = {
+      null: "black"
+    };
 
     this.curDragging = undefined;
     /** @type {{x:number, y:number} | null} */
@@ -45,6 +49,25 @@ class CardGame {
 
     document.body.style.backgroundImage = "url('./background.jpg')";
     document.body.style.backgroundRepeat = "repeat";
+
+    // Add player list to the top right hand corner of the screen
+    this.playerList = document.createElement("div");
+    this.playerList.style.position = "absolute";
+    this.playerList.style.width = "130px";
+    this.playerList.style.height = "100px";
+    this.playerList.style.top = "0px";
+    this.playerList.style.left = "270px";
+    //this.playerList.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
+    //this.playerList.style.border = "10px solid black";
+    //this.playerList.style.borderRadius = "20px";
+    //this.playerList.style.zIndex = "0";
+    //this.playerList.style.textAlign = "center";
+    //this.playerList.style.verticalAlign = "middle";
+    //this.playerList.style.lineHeight = "20px";
+    //this.playerList.style.fontSize = "20px";
+    this.playerList.style.pointerEvents = "none";
+    //this.playerList.textContent = "Players:";
+    document.body.appendChild(this.playerList);
 
     this.hand = document.createElement("div");
     this.hand.style.position = "absolute";
@@ -125,7 +148,7 @@ class CardGame {
     this.resetButton.style.lineHeight = "20px";
     this.resetButton.style.fontSize = "20px";
     this.resetButton.style.pointerEvents = "auto";
-    this.resetButton.textContent = "Reset Game";
+    this.resetButton.textContent = "Reset";
     this.resetButton.addEventListener("click", () => {
       this.conn.send(JSON.stringify({ type: "reset" }));
     });
@@ -136,7 +159,7 @@ class CardGame {
     this.sortSuitButton.style.position = "absolute";
     this.sortSuitButton.style.width = "150px";
     this.sortSuitButton.style.height = "50px";
-    this.sortSuitButton.style.top = "640px";
+    this.sortSuitButton.style.top = "630px";
     this.sortSuitButton.style.left = "200px";
     this.sortSuitButton.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
     this.sortSuitButton.style.border = "10px solid black";
@@ -156,7 +179,7 @@ class CardGame {
     this.sortSuitButton.style.position = "absolute";
     this.sortSuitButton.style.width = "150px";
     this.sortSuitButton.style.height = "50px";
-    this.sortSuitButton.style.top = "640px";
+    this.sortSuitButton.style.top = "630px";
     this.sortSuitButton.style.left = "50px";
     this.sortSuitButton.style.backgroundColor = "rgba(255, 255, 255, 0.4)";
     this.sortSuitButton.style.border = "10px solid black";
@@ -260,7 +283,6 @@ class CardGame {
       this.cards[card].element.style.transform = `translate(${this.cards[card].renderPosition.x - (238*0.4)}px,
                                                             ${this.cards[card].renderPosition.y - (332*0.4)}px)
                                                             rotate(${this.cards[card].rotation}deg) scale(0.4)`;
-      //this.highestZIndex = Math.max(this.highestZIndex, this.cards[card].zIndex);
     }
 
     // Interpolate the players' render positions towards their actual positions
@@ -359,7 +381,7 @@ class CardGame {
         for (let card in data.cards) {
           if (this.cards[card] === undefined) {
             this.cards[card] = data.cards[card];
-            let selectionColor = (this.cards[card].selectedBy !== null) ? "blue" : "black";
+            let selectionColor = (this.cards[card].selectedBy !== null) ? this.playersToColors[this.cards[card].selectedBy] : "black";
             let img = document.createElement("img");
             img.src = "./cards/BACK.jpg"; //"./cards/"+this.cards[card].suit+"-"+this.cards[card].value+".svg";
             img.style.position = "absolute";
@@ -381,12 +403,13 @@ class CardGame {
 
             this.cards[card].element = img;
             this.cards[card].renderPosition = { x: this.cards[card].position.x, y: this.cards[card].position.y };
+            
           } else {
             Object.assign(this.cards[card], data.cards[card]);
             //this.cards[card].element.style.transform = `translate(${this.cards[card].position.x - (238*0.25)}px, 
             //                                                      ${this.cards[card].position.y - (332*0.25)}px) 
             //                                                      rotate(${this.cards[card].rotation}deg) scale(0.5)`;
-            let selectionColor = (this.cards[card].selectedBy !== null) ? "blue" : "black";
+            let selectionColor = (this.cards[card].selectedBy !== null) ? this.playersToColors[this.cards[card].selectedBy] : "black";
             this.cards[card].element.style.zIndex = ""+this.cards[card].zIndex;
             let visible = (this.cards[card].visibleOnlyTo === "all" || this.cards[card].visibleOnlyTo === this.conn.id);
             this.cards[card].element.classList.toggle("visible", visible);
@@ -419,6 +442,8 @@ class CardGame {
             img.style.touchAction = "none";
             img.style.zIndex = ""+10000000;
             img.style.pointerEvents = "none";
+            img.style.filter = "drop-shadow(0px 0px 3px "+this.players[player].color+")";
+            this.playersToColors[this.players[player].id] = this.players[player].color;
             document.body.prepend(img);
             this.players[player].element = img;
 
@@ -428,8 +453,8 @@ class CardGame {
             selectionElem.style.height = "0px";
             selectionElem.style.top = "0px";
             selectionElem.style.left = "0px";
-            selectionElem.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
-            selectionElem.style.border = "2px dashed blue";
+            selectionElem.style.backgroundColor = "rgba(255, 255, 255, "+(this.players[player].id === this.conn.id ? 0.25 : 0.1)+")";
+            selectionElem.style.border = "2px dashed "+this.players[player].color;
             selectionElem.style.borderRadius = "20px";
             selectionElem.style.zIndex = "100000000";
             selectionElem.style.pointerEvents = "none";
@@ -438,6 +463,32 @@ class CardGame {
 
             this.players[player].renderPosition = { x: this.players[player].cursorPosition.x, y: this.players[player].cursorPosition.y };
             this.players[player].renderSelection = { x1: 0, y1: 0, x2: 0, y2: 0 };
+
+            /** @type {HTMLDivElement | HTMLInputElement} */
+            this.players[player].nametag = document.createElement(this.players[player].id === this.conn.id ? "input" : "div");
+            this.players[player].nametag.style.position = "relative";
+            this.players[player].nametag.style.width = "100%";
+            this.players[player].nametag.style.height = "20px";
+            this.players[player].nametag.style.color = this.players[player].color;
+            this.players[player].nametag.style.backgroundColor = "rgba(255, 255, 255, "+(this.players[player].id === this.conn.id ? 0.6 : 0.4)+")";
+            this.players[player].nametag.style.border = "2px solid black";
+            this.players[player].nametag.style.borderRadius = "20px";
+            this.players[player].nametag.style.zIndex = "0";
+            this.players[player].nametag.style.textAlign = "center";
+            this.players[player].nametag.style.verticalAlign = "middle";
+            this.players[player].nametag.style.lineHeight = "20px";
+            this.players[player].nametag.style.fontSize = "20px";
+            if(this.players[player].id === this.conn.id){
+              this.players[player].nametag.style.pointerEvents = "auto";
+              this.players[player].nametag.value = this.players[player].name;
+              this.players[player].nametag.addEventListener("input", (event) => {
+                this.conn.send(JSON.stringify({ type: "name", name: this.players[player].nametag.value }));
+              });
+            }else{
+              this.players[player].nametag.style.pointerEvents = "none";
+              this.players[player].nametag.textContent = this.players[player].name;
+            }
+            this.playerList.appendChild(this.players[player].nametag);
           } else {
             let selectionDirty = this.players[player].selection === null;
             Object.assign(this.players[player], data.players[player]);
@@ -447,6 +498,11 @@ class CardGame {
               this.players[player].renderSelection.x2 = this.players[player].selection.x2;
               this.players[player].renderSelection.y2 = this.players[player].selection.y2;
             }
+
+            // Render player name and number of cards in hand
+            let numCardsInHand = 0;
+            for(let card in this.cards){ if(this.cards[card].visibleOnlyTo === player){ numCardsInHand += 1; } }
+            this.players[player].nametag.textContent = this.players[player].name+" - "+numCardsInHand;
             //this.players[player].element.style.transform = `translate3d(${this.players[player].cursorPosition.x}px, ${this.players[player].cursorPosition.y}px, 0px) rotateZ(${this.players[player].cursorPressed ? -10 : 0}deg)`;
           }
           this.players[player].dirty = false;
@@ -465,6 +521,8 @@ class CardGame {
           if (this.players[player].dirty) {
             this.add(`Player ${this.players[player].name} has disconnected!`);
             this.players[player].element.remove();
+            this.players[player].nametag.remove();
+            this.players[player].selectionElement.remove();
             delete this.players[player];
           }
         }
@@ -476,8 +534,8 @@ class CardGame {
 
   /** @param {string} text - The text to be added */
   add(text) {
-    this.output.appendChild(document.createTextNode("........."+text));
-    this.output.appendChild(document.createElement("br"));
+    //this.output.appendChild(document.createTextNode("........."+text));
+    //this.output.appendChild(document.createElement("br"));
   }
 }
 

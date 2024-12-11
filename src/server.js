@@ -14,10 +14,12 @@ class PartyServer {
     this.suits  = ["CLUB", "SPADE", "HEART", "DIAMOND"];
     this.values = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11-JACK", "12-QUEEN", "13-KING", "1"];
 
+    this.playerColors = ["#FF0000", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF", "#FF8000", "#FF0080", "#8000FF", "#0080FF", "#80FF00", "#00FF80", "#FF8080", "#8080FF", "#FF80FF", "#80FFFF", "#FFFF80", "#FF80FF"];
+
     /** @type {Room} */
     this.room = room;
 
-    /** @type {Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, cursorPressed: boolean, selection: {x1: number, y1: number, x2: number, y2: number} | null}>} */
+    /** @type {Record<string, { name: string, id:string, cursorPosition: { x: number, y: number }, color:string, cursorPressed: boolean, selection: {x1: number, y1: number, x2: number, y2: number} | null}>} */
     this.players = {};
     this.globalPlayerCount = 0;
     this.highestzIndex = 10000;
@@ -66,7 +68,8 @@ class PartyServer {
     // Add the player to the list of players
     this.globalPlayerCount += 1;
     this.players[conn.id] = {
-      name: "Player " + this.globalPlayerCount,
+      name: "noob " + this.globalPlayerCount,
+      color: this.playerColors[this.globalPlayerCount % this.playerColors.length],
       id: conn.id,
       cursorPosition: { x: 0, y: 0 },
       cursorPressed: false,
@@ -101,7 +104,7 @@ class PartyServer {
                this.cards[card].position.x < data.selection.x2 && 
                this.cards[card].position.y > data.selection.y1 && 
                this.cards[card].position.y < data.selection.y2){
-              if(this.cards[card].selectedBy === null && 
+              if(//this.cards[card].selectedBy === null && 
                  (this.cards[card].visibleOnlyTo === "all" || 
                   this.cards[card].visibleOnlyTo === sender.id)){
                 this.cards[card].selectedBy = sender.id;
