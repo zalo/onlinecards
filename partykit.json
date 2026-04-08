@@ -1,6 +1,6 @@
 {
   "$schema": "https://www.partykit.io/schema.json",
-  "name": "onlinecards",
+  "name": "onlinecards3d",
   "main": "src/server.js",
   "compatibilityDate": "2024-12-06",
   "serve": {

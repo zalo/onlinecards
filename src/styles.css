@@ -1,52 +1,153 @@
-/* 
-  We've already included normalize.css. 
+/* ============================================
+   Online Cards 3D — UI Overlay Styles
+   ============================================ */
 
-  But we'd like a modern looking boilerplate. 
-  Clean type, sans-serif, and a nice color palette. 
-  
-*/
+:root {
+  --gold: #c8a84e;
+  --gold-light: #dfc271;
+  --gold-glow: rgba(200, 168, 78, 0.35);
+  --panel: rgba(10, 30, 15, 0.72);
+  --panel-border: rgba(200, 168, 78, 0.25);
+  --cream: #f5ead6;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 body {
-  font-family: sans-serif;
+  margin: 0;
+  padding: 0;
+  font-family: 'Outfit', sans-serif;
   font-size: 16px;
   line-height: 1.5;
-  color: #333;
-  touch-action: none;
+  color: var(--cream);
+  background: #070d09;
   overflow: hidden;
-  position: fixed;
-  -webkit-touch-callout: none; /* iOS Safari */
-  -webkit-user-select: none; /* Safari */
-   -khtml-user-select: none; /* Konqueror HTML */
-     -moz-user-select: none; /* Old versions of Firefox */
-      -ms-user-select: none; /* Internet Explorer/Edge */
-          user-select: none; /* Non-prefixed version, currently
-                                supported by Chrome, Edge, Opera and Firefox */
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-family: sans-serif;
-  font-weight: 600;
-  line-height: 1.25;
-  margin-top: 0;
-  margin-bottom: 0.5rem;
+canvas {
+  display: block;
+  touch-action: none;
 }
 
-#app {
-  padding: 1rem;
+/* ===== UI Overlay ===== */
+
+#ui-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
 }
 
-.visible {
-  visibility: visible;
-  opacity: 1;
-  transition: opacity 0.1s linear;
+/* ===== Buttons ===== */
+
+.game-btn {
+  position: absolute;
+  font-family: 'Outfit', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gold);
+  background: var(--panel);
+  border: 1.5px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px 18px;
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  line-height: 1;
 }
-.hidden {
-  visibility: hidden;
-  opacity: 0;
-  transition: visibility 0s 0.1s, opacity 0.1s linear;
+
+.game-btn:hover {
+  background: rgba(200, 168, 78, 0.15);
+  border-color: var(--gold);
+  box-shadow: 0 0 16px var(--gold-glow);
+  color: var(--gold-light);
+}
+
+.game-btn:active {
+  transform: scale(0.96);
+  background: rgba(200, 168, 78, 0.22);
+}
+
+.btn-deal {
+  top: 12px;
+  left: 12px;
+}
+
+.btn-reset {
+  top: 12px;
+  left: 96px;
+}
+
+.btn-sort-suit {
+  bottom: 12px;
+  left: 12px;
+}
+
+.btn-sort-rank {
+  bottom: 12px;
+  left: 132px;
+}
+
+/* ===== Player Panel ===== */
+
+.player-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 130px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.player-nametag {
+  position: relative;
+  width: 100%;
+  height: 26px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  text-align: center;
+  line-height: 26px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+}
+
+.player-nametag-self {
+  pointer-events: auto;
+  background: rgba(200, 168, 78, 0.1);
+  border-color: rgba(200, 168, 78, 0.4);
+  outline: none;
+  color: var(--gold-light);
+  font-family: 'Outfit', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  height: 26px;
+  line-height: 26px;
+  cursor: text;
 }
