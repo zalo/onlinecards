@@ -6,14 +6,15 @@
 
 import PhysXInit from '../assets/physx/physx-js-webidl.mjs';
 import physxWasm from '../assets/physx/physx-js-webidl.wasm';
+import { encode } from '@msgpack/msgpack';
 
 // Card half-extents (1.0 x 0.02 x 1.4 full size)
 const CH_X = 0.5, CH_Y = 0.01, CH_Z = 0.7;
 // Table half-extents
-const TH_X = 2.0, TH_Y = 0.05, TH_Z = 2.5;
+const TH_X = 2.0, TH_Y = 0.5, TH_Z = 2.5;
 const HAND_Z = 1.0;           // z boundary: above this = hand
-const DECK_X = -1.5, DECK_Z = -2.0;
-const GRAB_Y = 0.15;          // hover height while dragging
+const DECK_X = -1.2, DECK_Z = -1.5;
+const GRAB_Y = 0.5;           // hover height = half card width
 
 /** @implements {Server} */
 class PartyServer {
@@ -26,7 +27,7 @@ class PartyServer {
 
     /** @type {Record<string, {name:string, id:string, color:string, cursorPosition:{x:number,y:number,z:number}, cursorPressed:boolean, selection:{x1:number,z1:number,x2:number,z2:number}|null}>} */
     this.players = {};
-    /** @type {Record<string, {suit:string, value:string, flipped:boolean, visibleOnlyTo:string, selectedBy:string|null, inHand:boolean}>} */
+    /** @type {Record<string, {suit:string, value:string, flipped:boolean, visibleOnlyTo:string, selectedBy:string|null, inHand:boolean, handOrder:number}>} */
     this.cards = {};
     /** @type {Record<string, any>} PhysX body per card */
     this.physCards = {};
@@ -38,6 +39,7 @@ class PartyServer {
     this.globalPlayerCount = 0;
     this.hasNewInfoToSend = false;
     this.updateCounter = 0;
+
   }
 
   async onStart() {
@@ -132,8 +134,8 @@ class PartyServer {
         let stackY = CH_Y + stackIdx * CH_Y * 2.5;
 
         let bv = new this.px.PxVec3(DECK_X, stackY, DECK_Z);
-        // Face-down: 180° around X → quat (1, 0, 0, 0)
-        let bq = new this.px.PxQuat(1, 0, 0, 0);
+        // Face-down: 180° around Z → quat (0, 0, 1, 0)
+        let bq = new this.px.PxQuat(0, 0, 1, 0);
         let bpose = new this.px.PxTransform(bv, bq);
 
         let sf = new this.px.PxShapeFlags(
@@ -146,13 +148,14 @@ class PartyServer {
         let body = this.pxPhysics.createRigidDynamic(bpose);
         body.attachShape(shape);
         this.px.PxRigidBodyExt.prototype.updateMassAndInertia(body, 10.0);
-        body.setLinearDamping(3.0);
-        body.setAngularDamping(3.0);
+        body.setLinearDamping(0.3);
+        body.setAngularDamping(0.4);
+        body.setSolverIterationCounts(12, 12); // 3x default (4 pos, 4 vel)
         this.pxScene.addActor(body);
 
         this.cards[id] = {
           suit: this.suits[s], value: this.values[v],
-          flipped: true, visibleOnlyTo: "all", selectedBy: null, inHand: false,
+          flipped: true, visibleOnlyTo: "all", selectedBy: null, inHand: false, handOrder: 0,
         };
         this.physCards[id] = body;
         this.needsUpdate[id] = true;
@@ -169,18 +172,33 @@ class PartyServer {
     this.lastPhysTime = now;
     if (dt <= 0) return;
 
-    this.pxScene.simulate(dt);
-    this.pxScene.fetchResults(true);
+    // Substep: smaller fixed timesteps prevent tunneling on thin cards
+    let substep = 1 / 120; // 120Hz physics
+    let remaining = dt;
+    while (remaining > 0.0001) {
+      let step = Math.min(remaining, substep);
+      this.pxScene.simulate(step);
+      this.pxScene.fetchResults(true);
+      remaining -= step;
+    }
 
+    // Per-card: proximity damping near deck + awake tracking + fall reset
+    let deckR2 = (CH_X * 3) * (CH_X * 3); // radius² around deck
     for (let id in this.physCards) {
       if (this.cards[id].inHand) continue;
-      if (!this.physCards[id].isSleeping()) {
+      let body = this.physCards[id];
+      if (!body.isSleeping()) {
         this.needsUpdate[id] = true;
         this.hasNewInfoToSend = true;
       }
-      // Reset cards that fell off
-      let p = this.physCards[id].getGlobalPose().get_p();
-      if (p.get_y() < -3) this.resetCard(id);
+      let p = body.getGlobalPose().get_p();
+      if (p.get_y() < -3) { this.resetCard(id); continue; }
+
+      // High damping near deck so the stack settles quickly
+      let dx = p.get_x() - DECK_X, dz = p.get_z() - DECK_Z;
+      let nearDeck = (dx * dx + dz * dz) < deckR2;
+      body.setLinearDamping(nearDeck ? 3.0 : 0.3);
+      body.setAngularDamping(nearDeck ? 3.0 : 0.4);
     }
   }
 
@@ -193,40 +211,62 @@ class PartyServer {
 
       let cardsState = this.getCardsState();
 
-      if (this.updateCounter % 30 === 0) {
-        this.room.broadcast(JSON.stringify({
-          type: "fullupdate", players: this.players, cards: cardsState,
-        }));
+      if (this.updateCounter % 60 === 0) {
+        this.packAndBroadcast({
+          t: 1, p: this.getPlayersState(), c: cardsState,
+        });
         for (let k in this.needsUpdate) this.needsUpdate[k] = false;
       } else {
-        let partial = { type: "partialupdate", players: /** @type {any} */({}), cards: /** @type {any} */({}) };
+        let playersState = this.getPlayersState();
+        let pp = /** @type {any} */ ({}), cc = /** @type {any} */ ({});
         for (let p in this.players) {
-          if (this.needsUpdate[p]) { partial.players[p] = this.players[p]; this.needsUpdate[p] = false; }
+          if (this.needsUpdate[p]) { pp[p] = playersState[p]; this.needsUpdate[p] = false; }
         }
         for (let c in cardsState) {
-          if (this.needsUpdate[c]) { partial.cards[c] = cardsState[c]; this.needsUpdate[c] = false; }
+          if (this.needsUpdate[c]) { cc[c] = cardsState[c]; this.needsUpdate[c] = false; }
         }
-        this.room.broadcast(JSON.stringify(partial));
+        this.packAndBroadcast({ t: 2, p: pp, c: cc });
       }
       this.updateCounter++;
       this.hasNewInfoToSend = false;
-    }, 1000 / 30);
+    }, 1000 / 60);
   }
 
+  // Compact card format: [suit, value, px, py, pz, qx, qy, qz, qw, flipped, visibleOnlyTo, selectedBy]
   getCardsState() {
     let out = /** @type {any} */ ({});
     for (let id in this.cards) {
       let c = this.cards[id];
       let pose = this.physCards[id].getGlobalPose();
       let p = pose.get_p(), q = pose.get_q();
-      out[id] = {
-        suit: c.suit, value: c.value,
-        position:   { x: p.get_x(), y: p.get_y(), z: p.get_z() },
-        quaternion: { x: q.get_x(), y: q.get_y(), z: q.get_z(), w: q.get_w() },
-        flipped: c.flipped, visibleOnlyTo: c.visibleOnlyTo, selectedBy: c.selectedBy,
-      };
+      out[id] = [
+        c.suit, c.value,
+        p.get_x(), p.get_y(), p.get_z(),
+        q.get_x(), q.get_y(), q.get_z(), q.get_w(),
+        c.flipped, c.visibleOnlyTo, c.selectedBy,
+      ];
     }
     return out;
+  }
+
+  // Compact player format: [name, color, id, cx, cy, cz, cursorPressed, selection]
+  getPlayersState() {
+    let out = /** @type {any} */ ({});
+    for (let id in this.players) {
+      let p = this.players[id];
+      out[id] = [
+        p.name, p.color, p.id,
+        p.cursorPosition.x, p.cursorPosition.y, p.cursorPosition.z,
+        p.cursorPressed,
+        p.selection,
+      ];
+    }
+    return out;
+  }
+
+  /** @param {any} msg */
+  packAndBroadcast(msg) {
+    this.room.broadcast(encode(msg));
   }
 
   // ── Grab / Move / Release (D6 joints) ────────────────────────────
@@ -247,21 +287,72 @@ class PartyServer {
     }
     if (selected.length === 0) selected = [cardId];
 
-    // Make hand cards dynamic before attaching joints
+    // Make hand cards dynamic before attaching joints.
+    // Compute expected hand positions ourselves — getGlobalPose() on kinematic
+    // bodies may return a stale pose from before the last setKinematicTarget().
+    let anyFromHand = false;
+    /** @type {Record<string, {x:number,y:number,z:number}>} */
+    let handPositions = {};
+    if (this.cards[cardId] && this.cards[cardId].inHand) {
+      anyFromHand = true;
+      // Recompute hand layout positions
+      let playerId2 = this.cards[cardId].visibleOnlyTo;
+      let handCards = [];
+      for (let c2 in this.cards) {
+        if (this.cards[c2].visibleOnlyTo === playerId2 && this.cards[c2].inHand) handCards.push(c2);
+      }
+      handCards.sort((a, b) => this.cards[a].handOrder - this.cards[b].handOrder);
+      let n = handCards.length, startX = -1.5, endX = 1.5, handZ = 2.0;
+      for (let i = 0; i < n; i++) {
+        let x = n > 1 ? startX + (endX - startX) * i / (n - 1) : 0;
+        handPositions[handCards[i]] = { x, y: CH_Y + 0.01, z: handZ };
+      }
+    }
+
     for (let c of selected) {
       if (this.cards[c].inHand) {
-        this.physCards[c].setRigidBodyFlag(this.px.PxRigidBodyFlagEnum.eKINEMATIC, false);
+        let body = this.physCards[c];
+        body.setRigidBodyFlag(this.px.PxRigidBodyFlagEnum.eKINEMATIC, false);
+        // Stamp the computed hand position — don't trust getGlobalPose()
+        let hp = handPositions[c] || { x: 0, y: CH_Y, z: 2.0 };
+        this.pxTmpVec.set_x(hp.x); this.pxTmpVec.set_y(hp.y); this.pxTmpVec.set_z(hp.z);
+        if (this.cards[c].flipped) {
+          this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0);
+          this.pxTmpQuat.set_z(1); this.pxTmpQuat.set_w(0);
+        } else {
+          this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0);
+          this.pxTmpQuat.set_z(0); this.pxTmpQuat.set_w(1);
+        }
+        this.pxTmpPose.set_p(this.pxTmpVec);
+        this.pxTmpPose.set_q(this.pxTmpQuat);
+        body.setGlobalPose(this.pxTmpPose);
         this.pxTmpVec.set_x(0); this.pxTmpVec.set_y(0); this.pxTmpVec.set_z(0);
-        this.physCards[c].setLinearVelocity(this.pxTmpVec);
-        this.physCards[c].setAngularVelocity(this.pxTmpVec);
-        this.physCards[c].wakeUp();
+        body.setLinearVelocity(this.pxTmpVec);
+        body.setAngularVelocity(this.pxTmpVec);
+        body.wakeUp();
         this.cards[c].inHand = false;
       }
     }
 
-    // Kinematic anchor at cursor position
-    let av = new this.px.PxVec3(cur.x, GRAB_Y, cur.z);
-    let aq = new this.px.PxQuat(0, 0, 0, 1);
+    // Anchor at cursor for table cards, at clicked card's position for hand cards
+    let anchorX = cur.x, anchorZ = cur.z;
+    let anchorY = GRAB_Y;
+    if (anyFromHand) {
+      let hp = handPositions[cardId] || { x: 0, y: CH_Y, z: 2.0 };
+      anchorX = hp.x;
+      anchorZ = hp.z;
+      anchorY = hp.y; // keep cards at hand height, not GRAB_Y
+    }
+
+    // Snap anchor rotation to nearest axis-aligned face-up or face-down
+    let cardQ = this.physCards[cardId].getGlobalPose().get_q();
+    let qx = cardQ.get_x(), qz = cardQ.get_z();
+    let uy = 1 - 2 * (qx * qx + qz * qz); // world-space Y of card's local +Y
+    let av = new this.px.PxVec3(anchorX, anchorY, anchorZ);
+    // face-up → identity, face-down → 180° around Z
+    let aq = uy > 0
+      ? new this.px.PxQuat(0, 0, 0, 1)
+      : new this.px.PxQuat(0, 0, 1, 0);
     let anchor = this.pxPhysics.createRigidDynamic(new this.px.PxTransform(av, aq));
     anchor.setRigidBodyFlag(this.px.PxRigidBodyFlagEnum.eKINEMATIC, true);
     this.pxScene.addActor(anchor);
@@ -271,12 +362,13 @@ class PartyServer {
       let body = this.physCards[c];
       body.wakeUp();
       let bp = body.getGlobalPose().get_p();
-      let ox = bp.get_x() - cur.x;
-      let oy = bp.get_y() - GRAB_Y;
-      let oz = bp.get_z() - cur.z;
+      // XZ offset preserves relative positions for multi-select
+      // Y offset = 0 so cards always lift to GRAB_Y
+      let ox = bp.get_x() - anchorX;
+      let oz = bp.get_z() - anchorZ;
 
       let anchorFrame = new this.px.PxTransform(
-        new this.px.PxVec3(ox, oy, oz), new this.px.PxQuat(0, 0, 0, 1));
+        new this.px.PxVec3(ox, 0, oz), new this.px.PxQuat(0, 0, 0, 1));
       let bodyFrame = new this.px.PxTransform(this.px.PxIDENTITYEnum.PxIdentity);
       let joint = this.px.D6JointCreate(this.pxPhysics, anchor, anchorFrame, body, bodyFrame);
 
@@ -291,7 +383,7 @@ class PartyServer {
       joint.setDrive(this.px.PxD6DriveEnum.eX, linDrive);
       joint.setDrive(this.px.PxD6DriveEnum.eY, linDrive);
       joint.setDrive(this.px.PxD6DriveEnum.eZ, linDrive);
-      let angDrive = new this.px.PxD6JointDrive(300, 50, Infinity, true);
+      let angDrive = new this.px.PxD6JointDrive(1000, 150, Infinity, true);
       joint.setDrive(this.px.PxD6DriveEnum.eSLERP, angDrive);
 
       joints.push(joint);
@@ -299,6 +391,7 @@ class PartyServer {
     }
 
     this.grabs[playerId] = { anchor, joints, cards: selected };
+    this.layoutHand(playerId); // Re-layout remaining cards to close gap
     this.hasNewInfoToSend = true;
   }
 
@@ -328,7 +421,66 @@ class PartyServer {
       }
       this.needsUpdate[c] = true;
     }
+
+    // Live reorder: shift non-dragged hand cards to make room while dragging
+    if (pos.z >= HAND_Z) {
+      this.previewHandReorder(playerId, grab.cards, pos.x);
+    } else {
+      this.layoutHand(playerId);
+    }
     this.hasNewInfoToSend = true;
+  }
+
+  /** @param {string} playerId @param {string[]} draggedCards @param {number} dragX */
+  previewHandReorder(playerId, draggedCards, dragX) {
+    let draggedSet = new Set(draggedCards);
+    let otherHand = [];
+    for (let c in this.cards) {
+      if (this.cards[c].visibleOnlyTo === playerId && this.cards[c].inHand && !draggedSet.has(c)) {
+        otherHand.push(c);
+      }
+    }
+    if (otherHand.length === 0) return;
+    otherHand.sort((a, b) => this.cards[a].handOrder - this.cards[b].handOrder);
+
+    let nDragged = draggedCards.length;
+    let totalSlots = otherHand.length + nDragged;
+    let startX = -1.5, endX = 1.5, handZ = 2.0;
+
+    // Compute all slot positions
+    let slots = [];
+    for (let i = 0; i < totalSlots; i++) {
+      slots.push(totalSlots > 1 ? startX + (endX - startX) * i / (totalSlots - 1) : 0);
+    }
+
+    // Find insertion index for dragged cards based on cursor X
+    let insertIdx = 0;
+    for (let i = 0; i < slots.length; i++) {
+      if (dragX > slots[i]) insertIdx = i + 1;
+    }
+    insertIdx = Math.min(insertIdx, totalSlots - nDragged);
+
+    // Assign non-dragged cards to slots, skipping the gap for dragged cards
+    let slotIdx = 0;
+    for (let i = 0; i < otherHand.length; i++) {
+      if (slotIdx === insertIdx) slotIdx += nDragged;
+      let x = slots[slotIdx];
+      this.pxTmpVec.set_x(x);
+      this.pxTmpVec.set_y(CH_Y + 0.01);
+      this.pxTmpVec.set_z(handZ);
+      if (this.cards[otherHand[i]].flipped) {
+        this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0);
+        this.pxTmpQuat.set_z(1); this.pxTmpQuat.set_w(0);
+      } else {
+        this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0);
+        this.pxTmpQuat.set_z(0); this.pxTmpQuat.set_w(1);
+      }
+      this.pxTmpPose.set_p(this.pxTmpVec);
+      this.pxTmpPose.set_q(this.pxTmpQuat);
+      this.physCards[otherHand[i]].setKinematicTarget(this.pxTmpPose);
+      this.needsUpdate[otherHand[i]] = true;
+      slotIdx++;
+    }
   }
 
   /** @param {string} playerId */
@@ -339,17 +491,72 @@ class PartyServer {
     for (let j of grab.joints) j.release();
     this.pxScene.removeActor(grab.anchor);
 
+    let enteringHand = false;
     for (let c of grab.cards) {
-      let cz = this.physCards[c].getGlobalPose().get_p().get_z();
+      let pose = this.physCards[c].getGlobalPose();
+      let cz = pose.get_p().get_z();
       if (cz >= HAND_Z && this.cards[c].visibleOnlyTo === playerId) {
+        // Sync flipped flag to actual physical orientation before entering hand
+        let q = pose.get_q();
+        let qx = q.get_x(), qz = q.get_z();
+        let uy = 1 - 2 * (qx * qx + qz * qz);
+        this.cards[c].flipped = uy <= 0; // face pointing down = flipped
+
         this.cards[c].inHand = true;
         this.physCards[c].setRigidBodyFlag(this.px.PxRigidBodyFlagEnum.eKINEMATIC, true);
+        enteringHand = true;
       } else {
         this.physCards[c].wakeUp();
       }
       this.needsUpdate[c] = true;
     }
     delete this.grabs[playerId];
+
+    // Compute hand insertion using cursor X (not getGlobalPose which may be stale
+    // for kinematic bodies whose targets haven't been applied by physics yet)
+    if (enteringHand) {
+      let pos = this.players[playerId].cursorPosition;
+      let releasedSet = new Set();
+      for (let c of grab.cards) {
+        if (this.cards[c].inHand) releasedSet.add(c);
+      }
+
+      // Non-released hand cards in their current order
+      let otherHand = [];
+      for (let c in this.cards) {
+        if (this.cards[c].visibleOnlyTo === playerId && this.cards[c].inHand && !releasedSet.has(c)) {
+          otherHand.push(c);
+        }
+      }
+      otherHand.sort((a, b) => this.cards[a].handOrder - this.cards[b].handOrder);
+
+      let released = [...releasedSet];
+      let nReleased = released.length;
+      let totalSlots = otherHand.length + nReleased;
+      let startX = -1.5, endX = 1.5;
+
+      // Compute insertion index from cursor position (same logic as previewHandReorder)
+      let slots = [];
+      for (let i = 0; i < totalSlots; i++) {
+        slots.push(totalSlots > 1 ? startX + (endX - startX) * i / (totalSlots - 1) : 0);
+      }
+      let insertIdx = 0;
+      for (let i = 0; i < slots.length; i++) {
+        if (pos.x > slots[i]) insertIdx = i + 1;
+      }
+      insertIdx = Math.min(insertIdx, totalSlots - nReleased);
+
+      // Build final hand order: other cards keep relative order, released cards inserted at gap
+      let order = 0, otherIdx = 0, relIdx = 0;
+      for (let i = 0; i < totalSlots; i++) {
+        if (i >= insertIdx && i < insertIdx + nReleased) {
+          if (relIdx < released.length) this.cards[released[relIdx++]].handOrder = order++;
+        } else {
+          if (otherIdx < otherHand.length) this.cards[otherHand[otherIdx++]].handOrder = order++;
+        }
+      }
+    }
+
     this.layoutHand(playerId);
     this.hasNewInfoToSend = true;
   }
@@ -362,6 +569,7 @@ class PartyServer {
     for (let c in this.cards) {
       if (this.cards[c].visibleOnlyTo === playerId && this.cards[c].inHand) handCards.push(c);
     }
+    handCards.sort((a, b) => this.cards[a].handOrder - this.cards[b].handOrder);
     let n = handCards.length;
     if (n === 0) return;
     let startX = -1.5, endX = 1.5, handZ = 2.0;
@@ -371,8 +579,9 @@ class PartyServer {
       this.pxTmpVec.set_y(CH_Y + 0.01);
       this.pxTmpVec.set_z(handZ);
       if (this.cards[handCards[i]].flipped) {
-        this.pxTmpQuat.set_x(1); this.pxTmpQuat.set_y(0);
-        this.pxTmpQuat.set_z(0); this.pxTmpQuat.set_w(0);
+        // Face-down: 180° around Z (consistent with flip/grab/reset)
+        this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0);
+        this.pxTmpQuat.set_z(1); this.pxTmpQuat.set_w(0);
       } else {
         this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0);
         this.pxTmpQuat.set_z(0); this.pxTmpQuat.set_w(1);
@@ -398,22 +607,35 @@ class PartyServer {
     }
 
     for (let c of toFlip) {
-      this.cards[c].flipped = !this.cards[c].flipped;
       let body = this.physCards[c];
 
       if (!this.cards[c].inHand) {
         body.wakeUp();
         let pose = body.getGlobalPose();
         let p = pose.get_p(), q = pose.get_q();
-        let qx = q.get_x(), qy = q.get_y(), qz = q.get_z(), qw = q.get_w();
-        // Multiply by 180° around local X: q_flip = (1, 0, 0, 0)
-        let nw = -qx, nx = qw, ny = qz, nz = -qy;
 
+        // Detect actual orientation: transform local +Y by the quaternion
+        // to get the world-space up direction of the card's face.
+        // For quat (x,y,z,w), the rotated +Y axis is:
+        //   uy = 1 - 2(x² + z²)
+        let qx = q.get_x(), qz = q.get_z();
+        let uy = 1 - 2 * (qx * qx + qz * qz);
+        let currentlyFaceUp = uy > 0;
+
+        // Flip to the opposite of the ACTUAL physical state
+        this.cards[c].flipped = currentlyFaceUp; // was face-up → now face-down
         this.pxTmpVec.set_x(p.get_x());
         this.pxTmpVec.set_y(p.get_y() + 0.3);
         this.pxTmpVec.set_z(p.get_z());
-        this.pxTmpQuat.set_x(nx); this.pxTmpQuat.set_y(ny);
-        this.pxTmpQuat.set_z(nz); this.pxTmpQuat.set_w(nw);
+        if (this.cards[c].flipped) {
+          // Face-down: 180° around Z
+          this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0);
+          this.pxTmpQuat.set_z(1); this.pxTmpQuat.set_w(0);
+        } else {
+          // Face-up: identity
+          this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0);
+          this.pxTmpQuat.set_z(0); this.pxTmpQuat.set_w(1);
+        }
         this.pxTmpPose.set_p(this.pxTmpVec);
         this.pxTmpPose.set_q(this.pxTmpQuat);
         body.setGlobalPose(this.pxTmpPose);
@@ -421,6 +643,8 @@ class PartyServer {
         this.pxTmpVec.set_x(0); this.pxTmpVec.set_y(0); this.pxTmpVec.set_z(0);
         body.setLinearVelocity(this.pxTmpVec);
         body.setAngularVelocity(this.pxTmpVec);
+      } else {
+        this.cards[c].flipped = !this.cards[c].flipped;
       }
       this.needsUpdate[c] = true;
     }
@@ -469,12 +693,15 @@ class PartyServer {
         return vd !== 0 ? vd : this.suits.indexOf(this.cards[b].suit) - this.suits.indexOf(this.cards[a].suit);
       });
     }
+    for (let i = 0; i < hc.length; i++) {
+      this.cards[hc[i]].handOrder = i;
+    }
     let n = hc.length, startX = -1.5, endX = 1.5, handZ = 2.0;
     for (let i = 0; i < n; i++) {
       let x = n > 1 ? startX + (endX - startX) * i / (n - 1) : 0;
       this.pxTmpVec.set_x(x); this.pxTmpVec.set_y(CH_Y + 0.01); this.pxTmpVec.set_z(handZ);
       if (this.cards[hc[i]].flipped) {
-        this.pxTmpQuat.set_x(1); this.pxTmpQuat.set_y(0); this.pxTmpQuat.set_z(0); this.pxTmpQuat.set_w(0);
+        this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0); this.pxTmpQuat.set_z(1); this.pxTmpQuat.set_w(0);
       } else {
         this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0); this.pxTmpQuat.set_z(0); this.pxTmpQuat.set_w(1);
       }
@@ -507,7 +734,7 @@ class PartyServer {
     body.setAngularVelocity(this.pxTmpVec);
     body.wakeUp();
     Object.assign(this.cards[cardId], {
-      flipped: true, visibleOnlyTo: "all", selectedBy: null, inHand: false,
+      flipped: true, visibleOnlyTo: "all", selectedBy: null, inHand: false, handOrder: 0,
     });
     this.needsUpdate[cardId] = true;
     this.hasNewInfoToSend = true;
@@ -523,7 +750,7 @@ class PartyServer {
       }
       let stackY = CH_Y + idx * CH_Y * 2.5;
       this.pxTmpVec.set_x(DECK_X); this.pxTmpVec.set_y(stackY); this.pxTmpVec.set_z(DECK_Z);
-      this.pxTmpQuat.set_x(1); this.pxTmpQuat.set_y(0); this.pxTmpQuat.set_z(0); this.pxTmpQuat.set_w(0);
+      this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0); this.pxTmpQuat.set_z(1); this.pxTmpQuat.set_w(0);
       this.pxTmpPose.set_p(this.pxTmpVec); this.pxTmpPose.set_q(this.pxTmpQuat);
       body.setGlobalPose(this.pxTmpPose);
       this.pxTmpVec.set_x(0); this.pxTmpVec.set_y(0); this.pxTmpVec.set_z(0);
@@ -531,7 +758,7 @@ class PartyServer {
       body.setAngularVelocity(this.pxTmpVec);
       body.wakeUp();
       Object.assign(this.cards[c], {
-        flipped: true, visibleOnlyTo: "all", selectedBy: null, inHand: false,
+        flipped: true, visibleOnlyTo: "all", selectedBy: null, inHand: false, handOrder: 0,
       });
       this.needsUpdate[c] = true;
       idx++;
@@ -554,15 +781,12 @@ class PartyServer {
     let body = this.physCards[topCard];
     body.wakeUp();
 
-    // Flip the card face-up via quaternion
+    // Flip the card face-up with absolute identity quaternion
     this.cards[topCard].flipped = false;
-    let pose = body.getGlobalPose();
-    let p = pose.get_p(), q = pose.get_q();
-    let qx = q.get_x(), qy = q.get_y(), qz = q.get_z(), qw = q.get_w();
-    let nw = -qx, nx = qw, ny = qz, nz = -qy;
+    let p = body.getGlobalPose().get_p();
     this.pxTmpVec.set_x(p.get_x()); this.pxTmpVec.set_y(p.get_y() + 0.2); this.pxTmpVec.set_z(p.get_z());
-    this.pxTmpQuat.set_x(nx); this.pxTmpQuat.set_y(ny);
-    this.pxTmpQuat.set_z(nz); this.pxTmpQuat.set_w(nw);
+    this.pxTmpQuat.set_x(0); this.pxTmpQuat.set_y(0);
+    this.pxTmpQuat.set_z(0); this.pxTmpQuat.set_w(1);
     this.pxTmpPose.set_p(this.pxTmpVec); this.pxTmpPose.set_q(this.pxTmpQuat);
     body.setGlobalPose(this.pxTmpPose);
 
@@ -588,9 +812,9 @@ class PartyServer {
       selection: null,
     };
     this.needsUpdate[conn.id] = true;
-    this.room.broadcast(JSON.stringify({
-      type: "fullupdate", players: this.players, cards: this.getCardsState(),
-    }));
+    this.packAndBroadcast({
+      t: 1, p: this.getPlayersState(), c: this.getCardsState(),
+    });
   }
 
   /** @param {Connection} conn */
@@ -605,9 +829,9 @@ class PartyServer {
     }
     delete this.players[conn.id];
     delete this.needsUpdate[conn.id];
-    this.room.broadcast(JSON.stringify({
-      type: "fullupdate", players: this.players, cards: this.getCardsState(),
-    }));
+    this.packAndBroadcast({
+      t: 1, p: this.getPlayersState(), c: this.getCardsState(),
+    });
   }
 
   /** @param {Connection} conn */
@@ -617,9 +841,9 @@ class PartyServer {
 
   // ── Message dispatch ──────────────────────────────────────────────
 
-  /** @param {string} message @param {Connection} sender */
+  /** @param {string | ArrayBuffer} message @param {Connection} sender */
   onMessage(message, sender) {
-    if (!message.startsWith("{")) return;
+    if (typeof message !== 'string' || !message.startsWith("{")) return;
     let data = JSON.parse(message);
     switch (data.type) {
       case "cursor":

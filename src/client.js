@@ -2,11 +2,9 @@
 /* global PARTYKIT_HOST */
 
 // @ts-check
-import * as THREE from 'three/webgpu';
-import { pass, mrt, output, normalView, diffuseColor, velocity, add, vec4, directionToColor, colorToDirection, sample } from 'three/tsl';
-import { ssgi } from 'three/addons/tsl/display/SSGINode.js';
-import { traa } from 'three/addons/tsl/display/TRAANode.js';
+import * as THREE from 'three';
 import PartySocket from "partysocket";
+import { decode } from '@msgpack/msgpack';
 import "./styles.css";
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -31,6 +29,7 @@ class CardGame3D {
       host: PARTYKIT_HOST,
       room: this.curRoom,
     });
+    this.conn.binaryType = 'arraybuffer';
 
     // Game state
     /** @type {Record<string, any>} */
@@ -58,90 +57,69 @@ class CardGame3D {
 
   // ── Three.js Scene Setup ──────────────────────────────────────────
 
-  async setupScene() {
+  setupScene() {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x070d09);
 
-    // Camera — overhead perspective looking at the table
-    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-    this.camera.position.set(0, 7.5, 5.5);
-    this.camera.lookAt(0, 0, 0.5);
+    // Camera — mostly overhead with slight angle for 3D depth
+    this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    this.camera.position.set(0, 10, 3.5);
+    this.camera.lookAt(0, 0, 0.3);
 
-    let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    let pixelRatio = isMobile ? Math.max(0.5, window.devicePixelRatio * 0.25) : Math.min(1, window.devicePixelRatio);
-
-    // WebGPU Renderer (falls back to WebGL2 gracefully)
-    this.renderer = new THREE.WebGPURenderer();
-    this.renderer.setPixelRatio(pixelRatio);
+    // WebGL Renderer with MSAA
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
     document.body.appendChild(this.renderer.domElement);
-    // Async init required before render pipeline setup
-    await this.renderer.init();
 
-    // ── Lighting ──
-    // Warm overhead spotlight
-    this.spotLight = new THREE.SpotLight(0xfff5e0, 30, 25, Math.PI / 3.5, 0.4, 1);
-    this.spotLight.position.set(0, 10, 0);
-    this.spotLight.castShadow = true;
-    this.spotLight.shadow.mapSize.width = 2048;
-    this.spotLight.shadow.mapSize.height = 2048;
-    this.spotLight.shadow.camera.near = 1;
-    this.spotLight.shadow.camera.far = 20;
-    this.spotLight.shadow.bias = -0.0002;
-    this.spotLight.shadow.normalBias = 0.02;
-    this.scene.add(this.spotLight);
+    // ── Lighting: multiple shadow-casting directionals for depth ──
+    // Main warm overhead light
+    let main = new THREE.DirectionalLight(0xfff5e0, 3.0);
+    main.position.set(1, 10, 2);
+    main.castShadow = true;
+    main.shadow.mapSize.width = 2048;
+    main.shadow.mapSize.height = 2048;
+    main.shadow.camera.near = 1;
+    main.shadow.camera.far = 20;
+    main.shadow.camera.left = -5;
+    main.shadow.camera.right = 5;
+    main.shadow.camera.top = 5;
+    main.shadow.camera.bottom = -5;
+    main.shadow.bias = -0.0003;
+    main.shadow.normalBias = 0.02;
+    this.scene.add(main);
 
-    // Hemisphere fill for ambient colour
-    let hemi = new THREE.HemisphereLight(0xfff8e8, 0x1a3a20, 2.0);
+    // Secondary fill from the opposite side
+    let fill = new THREE.DirectionalLight(0xc8a84e, 1.2);
+    fill.position.set(-3, 8, -1);
+    fill.castShadow = true;
+    fill.shadow.mapSize.width = 1024;
+    fill.shadow.mapSize.height = 1024;
+    fill.shadow.camera.near = 1;
+    fill.shadow.camera.far = 20;
+    fill.shadow.camera.left = -5;
+    fill.shadow.camera.right = 5;
+    fill.shadow.camera.top = 5;
+    fill.shadow.camera.bottom = -5;
+    fill.shadow.bias = -0.0003;
+    this.scene.add(fill);
+
+    // Rim light for edge definition
+    let rim = new THREE.DirectionalLight(0xffe8d0, 0.8);
+    rim.position.set(4, 6, -3);
+    this.scene.add(rim);
+
+    // Hemisphere ambient
+    let hemi = new THREE.HemisphereLight(0xfff8e8, 0x1a3a20, 1.5);
     hemi.position.set(0, 20, 0);
     this.scene.add(hemi);
 
-    // Subtle directional light for rim highlights
-    let dir = new THREE.DirectionalLight(0xc8a84e, 1.5);
-    dir.position.set(-4, 6, 3);
-    this.scene.add(dir);
-
-    // ── Post-processing: SSGI + TRAA ──
-    this.renderPipeline = new THREE.RenderPipeline(this.renderer);
-
-    const scenePass = pass(this.scene, this.camera);
-    scenePass.setMRT(mrt({
-      output: output,
-      diffuseColor: diffuseColor,
-      normal: directionToColor(normalView),
-      velocity: velocity
-    }));
-
-    const scenePassColor    = scenePass.getTextureNode('output');
-    const scenePassDiffuse  = scenePass.getTextureNode('diffuseColor');
-    const scenePassDepth    = scenePass.getTextureNode('depth');
-    const scenePassNormal   = scenePass.getTextureNode('normal');
-    const scenePassVelocity = scenePass.getTextureNode('velocity');
-
-    // Reduce bandwidth with lower-precision textures
-    scenePass.getTexture('diffuseColor').type = THREE.UnsignedByteType;
-    scenePass.getTexture('normal').type       = THREE.UnsignedByteType;
-
-    const sceneNormal = sample(( /** @type {any} */ uv) => colorToDirection(scenePassNormal.sample(uv)));
-
-    this.giPass = ssgi(scenePassColor, scenePassDepth, sceneNormal, this.camera);
-    this.giPass.useTemporalFiltering = true;
-    if (isMobile) {
-      this.giPass.sliceCount.value = 1;
-      this.giPass.stepCount.value  = 8;
-    } else {
-      this.giPass.sliceCount.value = 2;
-      this.giPass.stepCount.value  = 8;
-    }
-
-    const gi = this.giPass.rgb;
-    const ao = this.giPass.a;
-    const compositePass = vec4(add(scenePassColor.rgb.mul(ao), scenePassDiffuse.rgb.mul(gi)), scenePassColor.a);
-    const traaPass = traa(compositePass, scenePassDepth, scenePassVelocity, this.camera);
-    this.renderPipeline.outputNode = traaPass;
-
     this.onResize();
-    this.renderer.setAnimationLoop(this.animate.bind(this));
+    this.animCb = this.animate.bind(this);
+    requestAnimationFrame(this.animCb);
 
     // ── Table geometry ──
     this.buildTable();
@@ -181,8 +159,8 @@ class CardGame3D {
   buildTable() {
     // Felt surface
     let feltMat = new THREE.MeshStandardMaterial({ color: 0x1a6b35, roughness: 0.92, metalness: 0 });
-    let felt = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.1, 5.2), feltMat);
-    felt.position.y = -0.05;
+    let felt = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.0, 5.2), feltMat);
+    felt.position.y = -0.5;
     felt.receiveShadow = true;
     this.scene.add(felt);
 
@@ -373,7 +351,8 @@ class CardGame3D {
   // ── Animation loop ────────────────────────────────────────────────
 
   animate() {
-    let alpha = 0.15;
+    requestAnimationFrame(this.animCb);
+    let alpha = 1.0;
 
     // Interpolate card meshes
     for (let id in this.cards) {
@@ -428,19 +407,42 @@ class CardGame3D {
       }
     }
 
-    // Render through the post-processing pipeline (SSGI + TRAA)
-    this.renderPipeline.render();
+    this.renderer.render(this.scene, this.camera);
   }
 
   // ── Server updates ────────────────────────────────────────────────
 
+  /** Expand compact card array → object */
+  expandCard(a) {
+    return {
+      suit: a[0], value: a[1],
+      position:   { x: a[2], y: a[3], z: a[4] },
+      quaternion: { x: a[5], y: a[6], z: a[7], w: a[8] },
+      flipped: a[9], visibleOnlyTo: a[10], selectedBy: a[11],
+    };
+  }
+
+  /** Expand compact player array → object */
+  expandPlayer(a) {
+    return {
+      name: a[0], color: a[1], id: a[2],
+      cursorPosition: { x: a[3], y: a[4], z: a[5] },
+      cursorPressed: a[6], selection: a[7],
+    };
+  }
+
   /** @param {MessageEvent} event */
   updateFromServer(event) {
-    /** @type {string} */
-    let raw = event.data;
-    if (!raw.startsWith("{")) return;
-    let data = JSON.parse(raw);
-    if (!data.type || !data.type.includes("update")) return;
+    if (typeof event.data === 'string') return; // ignore non-binary
+    let raw = decode(new Uint8Array(event.data));
+    // Expand compact format: t=1 fullupdate, t=2 partialupdate
+    let data = {
+      type: raw.t === 1 ? "fullupdate" : "partialupdate",
+      cards: /** @type {any} */ ({}),
+      players: /** @type {any} */ ({}),
+    };
+    for (let id in raw.c) data.cards[id] = this.expandCard(raw.c[id]);
+    for (let id in raw.p) data.players[id] = this.expandPlayer(raw.p[id]);
 
     if (data.type === "fullupdate") {
       for (let c in this.cards)   this.cards[c].dirty   = true;
